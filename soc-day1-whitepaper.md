@@ -70,11 +70,9 @@ QTest 直接访问设备模型地址空间
 
 读：
 
-```text
-README_zh.md
-Makefile.camp
-exper-note/soc-7day-plan.md
-```
+- [README_zh.md](../README_zh.md)
+- [Makefile.camp](../Makefile.camp)
+- [exper-note/soc-7day-plan.md](./soc-7day-plan.md)
 
 你要提取三件事：
 
@@ -146,10 +144,8 @@ virt_machine_init(MachineState *machine)
 
 读：
 
-```text
-include/hw/riscv/g233.h
-hw/riscv/g233.c
-```
+- [include/hw/riscv/g233.h](../include/hw/riscv/g233.h)
+- [hw/riscv/g233.c](../hw/riscv/g233.c)
 
 重点搜索：
 
@@ -303,15 +299,13 @@ test-spi-overrun: pass/fail
 
 读：
 
-```text
-tests/gevico/qtest/meson.build
-tests/gevico/qtest/test-board-g233.c
-tests/gevico/qtest/test-gpio-basic.c
-tests/gevico/qtest/test-gpio-int.c
-tests/gevico/qtest/test-pwm-basic.c
-tests/gevico/qtest/test-wdt-timeout.c
-tests/gevico/qtest/test-spi-jedec.c
-```
+- [tests/gevico/qtest/meson.build](../tests/gevico/qtest/meson.build)
+- [tests/gevico/qtest/test-board-g233.c](../tests/gevico/qtest/test-board-g233.c)
+- [tests/gevico/qtest/test-gpio-basic.c](../tests/gevico/qtest/test-gpio-basic.c)
+- [tests/gevico/qtest/test-gpio-int.c](../tests/gevico/qtest/test-gpio-int.c)
+- [tests/gevico/qtest/test-pwm-basic.c](../tests/gevico/qtest/test-pwm-basic.c)
+- [tests/gevico/qtest/test-wdt-timeout.c](../tests/gevico/qtest/test-wdt-timeout.c)
+- [tests/gevico/qtest/test-spi-jedec.c](../tests/gevico/qtest/test-spi-jedec.c)
 
 不要细读 SPI Flash 全部测试，今天只做总览。用下面命令快速看每个测试注册了哪些 case：
 
@@ -465,6 +459,124 @@ Day 2 的第一个目标不是优雅，而是 `test-gpio-basic` 通过。
 7. Day 2 实现文件清单
 ```
 
+## Day 1 执行记录
+
+下面这部分是当天必须填写的日志。不要追求好看，先保证信息真实、可复盘。
+
+### 1. 构建与测试命令记录
+
+| 时间 | 命令 | 结果 | 关键输出 / 错误摘要 | 处理方式 |
+| --- | --- | --- | --- | --- |
+|  | `make -f Makefile.camp configure` |  |  |  |
+|  | `make -f Makefile.camp build` |  |  |  |
+|  | `make -f Makefile.camp test-soc` |  |  |  |
+
+补充记录：
+
+```text
+configure 是否通过：
+build 是否通过：
+test-soc 是否跑完：
+最先失败的命令：
+最关键的错误信息：
+下一步处理：
+```
+
+### 2. SoC 10 题失败矩阵
+
+| 测试 | 结果 | 失败现象 / 关键日志 | 初步判断 |
+| --- | --- | --- | --- |
+| `test-board-g233` |  |  |  |
+| `test-gpio-basic` |  |  |  |
+| `test-gpio-int` |  |  |  |
+| `test-pwm-basic` |  |  |  |
+| `test-wdt-timeout` |  |  |  |
+| `test-spi-jedec` |  |  |  |
+| `test-flash-read` |  |  |  |
+| `test-flash-read-interrupt` |  |  |  |
+| `test-spi-cs` |  |  |  |
+| `test-spi-overrun` |  |  |  |
+
+当前得分：
+
+```text
+通过数量：
+失败数量：
+阻塞点：
+```
+
+### 3. G233 简化地址空间表
+
+| 模块 | 地址 | 当前状态 | 证据位置 |
+| --- | --- | --- | --- |
+| CLINT | `0x02000000` |  |  |
+| PLIC | `0x0C000000` |  |  |
+| UART0 | `0x10000000` |  |  |
+| VirtIO MMIO | `0x10001000` |  |  |
+| WDT | `0x10010000` |  |  |
+| GPIO | `0x10012000` |  |  |
+| PWM | `0x10015000` |  |  |
+| SPI | `0x10018000` |  |  |
+| pflash | `0x20000000` |  |  |
+| DRAM | `0x80000000` |  |  |
+
+### 4. QTest 到 MMIO 回调调用链
+
+用自己的话写出来，不要只复制模板：
+
+```text
+qtest_writel(qts, addr, value)
+->
+->
+->
+```
+
+需要确认的问题：
+
+```text
+addr 是 guest 物理地址还是 offset：
+MemoryRegionOps.write 里的 offset 是什么：
+为什么 SoC 测试不需要 guest driver：
+```
+
+### 5. SoC 测试对照表
+
+| 测试文件 | 外设 | 基地址 | IRQ | 核心行为 |
+| --- | --- | --- | --- | --- |
+| `test-board-g233.c` |  |  |  |  |
+| `test-gpio-basic.c` |  |  |  |  |
+| `test-gpio-int.c` |  |  |  |  |
+| `test-pwm-basic.c` |  |  |  |  |
+| `test-wdt-timeout.c` |  |  |  |  |
+| `test-spi-jedec.c` |  |  |  |  |
+| `test-flash-read.c` |  |  |  |  |
+| `test-flash-read-interrupt.c` |  |  |  |  |
+| `test-spi-cs.c` |  |  |  |  |
+| `test-spi-overrun.c` |  |  |  |  |
+
+### 6. GPIO basic 行为表
+
+从 [test-gpio-basic.c](../tests/gevico/qtest/test-gpio-basic.c) 里逐条提取，不要凭感觉写。
+
+| 场景 | 测试动作 | 期望结果 | 实现提示 |
+| --- | --- | --- | --- |
+| reset |  |  |  |
+| direction |  |  |  |
+| output bit0 |  |  |  |
+| multi pin |  |  |  |
+| interrupt registers in basic test |  |  |  |
+
+### 7. Day 2 开工前检查
+
+| 检查项 | 是否完成 | 备注 |
+| --- | --- | --- |
+| 环境能 configure/build |  |  |
+| 已跑过 `test-soc` 基线 |  |  |
+| 已知道 GPIO 基地址 |  |  |
+| 已知道 GPIO 寄存器 offset |  |  |
+| 已知道 GPIO basic 测什么 |  |  |
+| 已知道新增设备文件大概放哪里 |  |  |
+
 ## Day 1 自测问题
 
 如果下面 10 个问题能答出来，Day 1 就过关。
@@ -521,4 +633,3 @@ Day 2 开始时只做一件事：
 -> 跑 test-gpio-basic
 -> 修到通过
 ```
-
