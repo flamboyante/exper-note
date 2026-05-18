@@ -1,0 +1,22 @@
+# Normalize text files across Windows/Linux editors.
+* text=auto eol=lf
+
+# Markdown and source-like notes should stay LF-only.
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary assets must not be line-ending normalized.
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.mp4 binary
+*.webm binary
+*.mkv binary
+*.wav binary
+*.mp3 binary
