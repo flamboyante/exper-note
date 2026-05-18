@@ -1,0 +1,32 @@
+# Local scratch space
+_tmp/
+tmp/
+lab/
+scratch/
+drafts/
+
+# Raw downloads and intermediate media
+downloads/
+raw/
+*.m4s
+*.mp4
+*.webm
+*.mkv
+*.mov
+*.wav
+*.mp3
+*.aac
+
+# Raw web/transcription artifacts
+*.html
+*.har
+*.log
+transcripts/raw/
+*.segments.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.tmp
