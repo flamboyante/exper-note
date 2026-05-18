@@ -64,12 +64,12 @@
 
 读：
 
-- `README_zh.md`
-- `Makefile.camp`
-- `hw/riscv/g233.c`
-- `include/hw/riscv/g233.h`
-- `tests/gevico/qtest/meson.build`
-- `tests/gevico/qtest/test-board-g233.c`
+- [README_zh.md](../README_zh.md)
+- [Makefile.camp](../Makefile.camp)
+- [hw/riscv/g233.c](../hw/riscv/g233.c)
+- [include/hw/riscv/g233.h](../include/hw/riscv/g233.h)
+- [tests/gevico/qtest/meson.build](../tests/gevico/qtest/meson.build)
+- [tests/gevico/qtest/test-board-g233.c](../tests/gevico/qtest/test-board-g233.c)
 
 做：
 
@@ -100,11 +100,11 @@ make -f Makefile.camp test-soc
 看：
 
 - QEMU 外设建模流程里的 MMIO 部分。
-- 可参考 `hw/gpio/mpc8xxx.c`、`hw/gpio/pl061.c`。
+- 可参考 [hw/gpio/mpc8xxx.c](../hw/gpio/mpc8xxx.c)、[hw/gpio/pl061.c](../hw/gpio/pl061.c)。
 
 读：
 
-- `tests/gevico/qtest/test-gpio-basic.c`
+- [tests/gevico/qtest/test-gpio-basic.c](../tests/gevico/qtest/test-gpio-basic.c)
 
 实现：
 
@@ -157,11 +157,11 @@ cd build
 看：
 
 - QEMU 外设建模流程里的中断线部分。
-- `hw/riscv/g233.c` 里 PLIC 创建和 IRQ 连接方式。
+- [hw/riscv/g233.c](../hw/riscv/g233.c) 里 PLIC 创建和 IRQ 连接方式。
 
 读：
 
-- `tests/gevico/qtest/test-gpio-int.c`
+- [tests/gevico/qtest/test-gpio-int.c](../tests/gevico/qtest/test-gpio-int.c)
 
 实现：
 
@@ -200,12 +200,12 @@ cd build
 看：
 
 - QEMU 时钟系统。
-- 可参考 `hw/watchdog/wdt_ib700.c`、`hw/timer/sifive_pwm.c`。
+- 可参考 [hw/watchdog/wdt_ib700.c](../hw/watchdog/wdt_ib700.c)、[hw/timer/sifive_pwm.c](../hw/timer/sifive_pwm.c)。
 
 读：
 
-- `tests/gevico/qtest/test-pwm-basic.c`
-- `tests/gevico/qtest/test-wdt-timeout.c`
+- [tests/gevico/qtest/test-pwm-basic.c](../tests/gevico/qtest/test-pwm-basic.c)
+- [tests/gevico/qtest/test-wdt-timeout.c](../tests/gevico/qtest/test-wdt-timeout.c)
 
 PWM 实现：
 
@@ -260,11 +260,11 @@ cd build
 看：
 
 - QEMU 外设建模流程里的状态机和 IRQ 更新方法。
-- 可参考 `hw/ssi/sifive_spi.c`、`hw/ssi/stm32f2xx_spi.c`。
+- 可参考 [hw/ssi/sifive_spi.c](../hw/ssi/sifive_spi.c)、[hw/ssi/stm32f2xx_spi.c](../hw/ssi/stm32f2xx_spi.c)。
 
 读：
 
-- `tests/gevico/qtest/test-spi-jedec.c`
+- [tests/gevico/qtest/test-spi-jedec.c](../tests/gevico/qtest/test-spi-jedec.c)
 
 实现：
 
@@ -308,8 +308,8 @@ cd build
 
 读：
 
-- `tests/gevico/qtest/test-flash-read.c`
-- `tests/gevico/qtest/test-flash-read-interrupt.c`
+- [tests/gevico/qtest/test-flash-read.c](../tests/gevico/qtest/test-flash-read.c)
+- [tests/gevico/qtest/test-flash-read-interrupt.c](../tests/gevico/qtest/test-flash-read-interrupt.c)
 
 实现命令：
 
@@ -357,8 +357,8 @@ cd build
 
 读：
 
-- `tests/gevico/qtest/test-spi-cs.c`
-- `tests/gevico/qtest/test-spi-overrun.c`
+- [tests/gevico/qtest/test-spi-cs.c](../tests/gevico/qtest/test-spi-cs.c)
+- [tests/gevico/qtest/test-spi-overrun.c](../tests/gevico/qtest/test-spi-overrun.c)
 
 实现：
 
@@ -404,4 +404,3 @@ SPI Flash 用命令状态机模拟 JEDEC/read/program/erase/CS/overrun。
 验证方式：
 使用 QTest 直接读写 MMIO 地址，验证寄存器、状态位、中断 pending、claim/complete 和边界条件。
 ```
-

@@ -47,13 +47,13 @@
 
 重点文件：
 
-- `Makefile.camp`
-- `hw/riscv/g233.c`
-- `tests/gevico/qtest/test-board-g233.c`
-- `tests/gevico/qtest/test-gpio-basic.c`
-- `tests/gevico/qtest/test-gpio-int.c`
-- `tests/gevico/qtest/test-wdt-timeout.c`
-- `tests/gevico/qtest/test-spi-jedec.c`
+- [Makefile.camp](../Makefile.camp)
+- [hw/riscv/g233.c](../hw/riscv/g233.c)
+- [tests/gevico/qtest/test-board-g233.c](../tests/gevico/qtest/test-board-g233.c)
+- [tests/gevico/qtest/test-gpio-basic.c](../tests/gevico/qtest/test-gpio-basic.c)
+- [tests/gevico/qtest/test-gpio-int.c](../tests/gevico/qtest/test-gpio-int.c)
+- [tests/gevico/qtest/test-wdt-timeout.c](../tests/gevico/qtest/test-wdt-timeout.c)
+- [tests/gevico/qtest/test-spi-jedec.c](../tests/gevico/qtest/test-spi-jedec.c)
 
 需要理解：
 

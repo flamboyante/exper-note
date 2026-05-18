@@ -69,7 +69,7 @@
 ✅ 你现在就做：
 - 把训练营网页结构、资料入口、博客入口都存成自己的资料地图。
 - 优先完成 `QEMU 开发环境搭建` 和 `构建/运行最小示例`。
-- 遇到不会的地方，不要硬扛，直接把问题丢给我，我帮你转成可执行步骤。
+- 遇到不会的地方，不要硬扛，先把问题整理成可执行步骤。
 
 ### 2. 基础阶段
 
@@ -267,9 +267,9 @@
 ## 我建议你下一步怎么继续
 
 ✅ 你现在就做：
-1. 先把训练营网页里 `导学阶段` 和 `基础阶段` 的目录发给我，或者直接让我继续抓。
-2. 我来给你做“第一周学习包”。
-3. 我再按你的节奏，把每一章整理成：
+1. 先整理训练营网页里 `导学阶段` 和 `基础阶段` 的目录。
+2. 形成“第一周学习包”。
+3. 再按学习节奏，把每一章整理成：
    - 本章在讲什么
    - 对应哪些源码目录
    - 该跑什么命令
@@ -278,12 +278,6 @@
 
 ---
 
-## 附：这份笔记的原始素材位置
+## 附：素材处理说明
 
-仅作追溯使用，不建议你平时直接看这些中间产物：
-- 视频缓存：`V:\CodexHome\tmp\video-study\BV1CSSQByEDB\BV1CSSQByEDB.mp4`
-- 音频：`V:\CodexHome\tmp\video-study\BV1CSSQByEDB\audio.wav`
-- 本地转写：`V:\CodexHome\tmp\video-study\BV1CSSQByEDB\transcript.txt`
-- 转写分段 JSON：`V:\CodexHome\tmp\video-study\BV1CSSQByEDB\transcript.segments.json`
-- PPT 抽帧：`V:\CodexHome\tmp\video-study\BV1CSSQByEDB\frames`
-- OCR 文本：`V:\CodexHome\tmp\video-study\BV1CSSQByEDB\ocr`
+这份笔记来自视频转写、PPT 抽帧/OCR 和人工校正。原始视频、音频、转写 JSON、OCR 中间文件不入库，避免仓库膨胀和 Windows/Linux 路径噪音。

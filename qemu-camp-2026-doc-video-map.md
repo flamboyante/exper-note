@@ -71,7 +71,7 @@
 | e. 模拟中断和异常 | [qemu-intr](https://qemu.gevico.online/tutorial/2026/ch2/qemu-intr/) | [BV1zEX4BzEGR](https://www.bilibili.com/video/BV1zEX4BzEGR/) `QEMU 训练营 \| 专业阶段 QEMU TCG 中断与异常 [CPU 建模]` | 已匹配 | 标题多了 TCG 语境，但主题一致 |
 | f. 模拟多核场景 | [qemu-multi-core](https://qemu.gevico.online/tutorial/2026/ch2/qemu-multi-core/) | [BV1CMX4BjE6w](https://www.bilibili.com/video/BV1CMX4BjE6w/) `QEMU 训练营 \| 专业阶段 QEMU 多核模拟 [CPU 建模]` | 已匹配 | CPU 建模线后段 |
 | g. 主板建模流程 | [qemu-machine](https://qemu.gevico.online/tutorial/2026/ch2/qemu-machine/) | [BV1v4X4BPEP3](https://www.bilibili.com/video/BV1v4X4BPEP3/) `QEMU 训练营 \| 专业阶段 QEMU 主板建模流程 [SOC 建模]` | 已匹配 | SoC 模块建议优先看 |
-| h. 外设建模流程 | [qemu-hw](https://qemu.gevico.online/tutorial/2026/ch2/qemu-hw/) | [BV1Ae9wBjEiD](https://www.bilibili.com/video/BV1Ae9wBjEiD/) `QEMU 训练营 \| 专业阶段 QEMU 外设建模流程 [SOC 建模]` | 已匹配 | 已生成学习资料：`notes/qemu-hw-study.md` |
+| h. 外设建模流程 | [qemu-hw](https://qemu.gevico.online/tutorial/2026/ch2/qemu-hw/) | [BV1Ae9wBjEiD](https://www.bilibili.com/video/BV1Ae9wBjEiD/) `QEMU 训练营 \| 专业阶段 QEMU 外设建模流程 [SOC 建模]` | 已匹配 | 已生成学习资料：[qemu-hw-study.md](./qemu-hw-study.md) |
 | i. 时钟系统介绍 | [qemu-clock](https://qemu.gevico.online/tutorial/2026/ch2/qemu-clock/) | [BV1p99cBCEzV](https://www.bilibili.com/video/BV1p99cBCEzV/) `QEMU 训练营 \| 专业阶段 QEMU 时钟系统 [SOC 建模]` | 已匹配 | PWM/WDT 计时相关，建议接在外设后 |
 | j. GPGPU 原理 | [qemu-gpgpu](https://qemu.gevico.online/tutorial/2026/ch2/qemu-gpgpu/) | [BV1NkSSBrEqM](https://www.bilibili.com/video/BV1NkSSBrEqM/) `从零开始的 GPGPU 模拟器与 LLM 自动化建模...` | 相关辅助 | 不是严格同名短课，但主题高度相关 |
 | k. PCIe 模拟方法 | [qemu-pcie](https://qemu.gevico.online/tutorial/2026/ch2/qemu-pcie/) | 暂未找到同名公开视频 | 待发布 / 待核验 | 目前未在已核公开视频中看到同名课 |

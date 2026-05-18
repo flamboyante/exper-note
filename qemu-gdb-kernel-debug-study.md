@@ -359,7 +359,7 @@
 
 ✅ 你现在就做：
 - 先把这条视频里的最小链路吃透
-- 后面如果你愿意，我可以直接帮你在这个仓库里给你搭一版
+- 后续可以在这个仓库里补一版
   - `QEMU + GDB`
   - `VS Code launch.json / tasks.json`
   - 可选的 `KernelShark` / `trace-cmd` 工作流
@@ -395,12 +395,6 @@
 - `frame-0106.jpg` 推荐工作流
 - `frame-0110.jpg` 总结
 
-## 附：原始素材位置
+## 附：素材处理说明
 
-仅供追溯，不建议平时直接依赖这些中间文件：
-- 视频缓存：`V:\CodexHome\tmp\video-study\BV14NAPzjEPW\BV14NAPzjEPW.mp4`
-- 音频：`V:\CodexHome\tmp\video-study\BV14NAPzjEPW\audio.wav`
-- 转写：`V:\CodexHome\tmp\video-study\BV14NAPzjEPW\transcript.txt`
-- 转写 JSON：`V:\CodexHome\tmp\video-study\BV14NAPzjEPW\transcript.segments.json`
-- 抽帧：`V:\CodexHome\tmp\video-study\BV14NAPzjEPW\frames`
-- OCR：`V:\CodexHome\tmp\video-study\BV14NAPzjEPW\ocr`
+这份笔记来自视频转写、PPT 抽帧/OCR 和人工校正。原始视频、音频、转写 JSON、OCR 中间文件不入库，避免仓库膨胀和 Windows/Linux 路径噪音。

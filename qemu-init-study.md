@@ -8,7 +8,7 @@
 阅读说明：
 - `🎥 视频/作者`：讲者在视频里重点强调的理解方式
 - `📘 讲义`：网页文档里相对稳定、适合反复查阅的内容
-- `🧠 我的理解`：我帮你压缩后的主线和重点
+- `🧠 我的理解`：压缩后的主线和重点
 - `✅ 你现在就做`：你看完就能直接动手的部分
 
 ---
@@ -385,7 +385,7 @@ riscv64-elf-gdb -ex "target remote localhost:1234"
 
 🎥 视频/作者：讲者最后明确说，这节课的重点不是几个函数名，而是一套启动流程分析方法。
 
-我帮你把它压成 4 步：
+可以把它压成 4 步：
 
 ### 第一步：从最小启动命令开始
 
@@ -521,12 +521,6 @@ si
 
 ---
 
-## 附：这份学习资料依赖的中间素材
+## 附：素材处理说明
 
-仅作追溯，不建议平时直接读这些中间文件：
-- 视频缓存：`V:\CodexHome\tmp\video-study\BV1kQwTzmEGc\BV1kQwTzmEGc.mp4`
-- 音频：`V:\CodexHome\tmp\video-study\BV1kQwTzmEGc\audio.wav`
-- 转写：`V:\CodexHome\tmp\video-study\BV1kQwTzmEGc\transcript.txt`
-- 转写分段：`V:\CodexHome\tmp\video-study\BV1kQwTzmEGc\transcript.segments.json`
-- 网页抓取：`V:\CodexHome\tmp\video-study\BV1kQwTzmEGc\qemu-init.html`
-- 网页抽取：`V:\CodexHome\tmp\video-study\BV1kQwTzmEGc\doc.extracted.txt`
+这份笔记来自视频转写、网页讲义抽取和人工校正。原始视频、音频、转写 JSON、网页抓取文件不入库，避免仓库膨胀和 Windows/Linux 路径噪音。

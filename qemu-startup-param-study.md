@@ -385,7 +385,7 @@ qemu-system-riscv64 -device virtio-blk-device,help
    - 网络配置
    - 交互/显示配置
 3. 对每一段写一句话解释它在干什么。
-4. 标出你最不懂的 3 个参数，下一轮直接丢给我。
+4. 标出最不懂的 3 个参数，下一轮集中查证和补充。
 
 ## 11. 下一章怎么接
 
@@ -398,11 +398,6 @@ qemu-system-riscv64 -device virtio-blk-device,help
 
 ---
 
-## 附：这份学习资料的中间素材
+## 附：素材处理说明
 
-仅作追溯，不建议平时直接看：
-- 视频缓存：`V:\CodexHome\tmp\video-study\BV1aVwMzYE8a\BV1aVwMzYE8a.mp4`
-- 语音转写：`V:\CodexHome\tmp\video-study\BV1aVwMzYE8a\transcript.txt`
-- 转写分段：`V:\CodexHome\tmp\video-study\BV1aVwMzYE8a\transcript.segments.json`
-- 网页抓取：`V:\CodexHome\tmp\video-study\BV1aVwMzYE8a\qemu-startup-param.html`
-- 网页抽取：`V:\CodexHome\tmp\video-study\BV1aVwMzYE8a\doc.extracted.txt`
+这份笔记来自视频转写、网页讲义抽取和人工校正。原始视频、音频、转写 JSON、网页抓取文件不入库，避免仓库膨胀和 Windows/Linux 路径噪音。

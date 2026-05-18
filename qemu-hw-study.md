@@ -60,7 +60,7 @@ QOM 类型注册
 
 🎥 视频/作者：讲者把主线概括成：注册类型、定义状态、初始化硬件骨架、实现 MMIO 行为、补齐 FIFO 和中断、接入 machine、支持迁移。
 
-📘 讲义：PL011 的实现位于 `hw/char/pl011.c`，状态定义在 `include/hw/char/pl011.h`。它通过 QOM 注册类型，父类是 `TYPE_SYS_BUS_DEVICE`。
+📘 讲义：PL011 的实现位于 [hw/char/pl011.c](../hw/char/pl011.c)，状态定义在 [include/hw/char/pl011.h](../include/hw/char/pl011.h)。它通过 QOM 注册类型，父类是 `TYPE_SYS_BUS_DEVICE`。
 
 🧠 我的理解：QEMU 里的“外设”不是一个裸 C struct，也不是一组散函数。它是一个 QOM 对象。对象类型告诉 QEMU“我是什么设备”，状态结构体保存“我现在处于什么状态”，MMIO 回调定义“guest 读写我时发生什么”。
 
@@ -368,7 +368,7 @@ guest write SPI_DR
 ✅ 你现在就做：练习一，跟一遍 PL011。
 
 ```text
-打开 hw/char/pl011.c 和 include/hw/char/pl011.h
+打开 [hw/char/pl011.c](../hw/char/pl011.c) 和 [include/hw/char/pl011.h](../include/hw/char/pl011.h)
 找到 TypeInfo
 找到 PL011State
 找到 memory_region_init_io
@@ -470,4 +470,3 @@ guest 写寄存器会触发什么副作用？
 🔗 和 SoC 训练营的关系：G233 的 SoC 模块其实就是把这章拆成多轮考试。GPIO 考 MMIO 和 IRQ，PWM 考多 channel 和 timer，WDT 考 timeout 和 magic key，SPI 考总线协议、片选、下游 flash 和 overrun。
 
 ✅ 你现在就做：下一步学习“主板建模流程”时，重点看 machine 如何把这些设备接起来。等你能同时说清“设备内部逻辑”和“machine 外部连线”，SoC 模块就不再是一团雾了。
-
