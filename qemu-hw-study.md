@@ -1,4 +1,4 @@
-# QEMU 外设建模流程学习资料
+# QEMU 外设建模流程学习资料（自包含教材版）
 
 ## 来源
 
@@ -7,466 +7,1521 @@
 - 视频标题校验：`QEMU 训练营 | 专业阶段 QEMU 外设建模流程 [SOC 建模]`
 - 作者 / UP：`绝对是泽文啦`
 - 讲义作者：`@zevorn`
-- 本地处理：已抓取讲义正文，已下载视频音频并用本地 `faster-whisper` 转写，视频时长约 `11:51`
+- 讲义版本：基于 QEMU `v10.2.0`
+- 本地素材：视频音频已下载并用本地 `faster-whisper` 转写，时长约 `11:51`
 
-⚠️ 容易踩坑：你计划里写的 `BV1p99cBCEzV` 实际对应“专业阶段 QEMU 时钟系统 [SOC 建模]”，不是本章。这里已校正为 `BV1Ae9wBjEiD`，后面“时钟系统”正好接到下一章学习。
+⚠️ 容易踩坑：`BV1p99cBCEzV` 不是本章视频，它是“专业阶段 QEMU 时钟系统 [SOC 建模]”。本章正确视频是 `BV1Ae9wBjEiD`。计划里提到的 `V:/CodexHome/tmp/video-study/BV1p99cBCEzV/doc.extracted.txt` 当前也对应时钟系统，不应再作为本章讲义缓存使用。
 
-本章没有放 PPT 截图。原因是讲义已经给出核心代码与结构，视频重点也是口头解释“建模主线”；普通标题页和过渡页放进来只会让笔记膨胀。
+本教材不放 PPT 截图。讲义和视频的有效信息主要是代码结构、调用链和工程解释，用 Markdown 表格和 ASCII 流程图表达更稳定，也更适合后面查阅。
 
 ---
 
 ## 阅读说明
 
-- `🎥 视频/作者`：讲者在视频里强调的理解方式。
-- `📘 讲义`：网页文档里可当手册反复查的稳定内容。
-- `🧠 我的理解`：我把概念翻译成你写工程代码时的判断方式。
-- `🧩 补充知识`：讲义和视频没完全展开，但做 SoC 设备必须知道的背景。
-- `🔗 和 SoC 训练营的关系`：落到 G233 的测试、寄存器、设备模型。
-- `✅ 你现在就做`：看完这一节后立刻动手的小任务。
-- `⚠️ 容易踩坑`：QEMU 初学和外设建模里最容易写错的地方。
+这份文档的目标不是“帮你回忆视频讲了什么”，而是替代视频和讲义，成为你学这一章的主教材。
+
+- `🎥 视频/作者`：讲者强调的理解方法，尤其是哪些地方初学者容易乱。
+- `📘 讲义`：讲义里的稳定知识点和必要源码短片段。
+- `🧠 我的理解`：把 QEMU 概念翻译成写设备模型时的工程动作。
+- `🧩 补充知识`：讲义和视频没有完整展开，但做 SoC 设备必须知道的背景。
+- `🔗 和 SoC 训练营的关系`：对应到 G233 的 qtest、寄存器、设备模型设计。
+- `✅ 你现在就做`：看完一节后马上能做的小练习。
+- `⚠️ 容易踩坑`：实现 GPIO/PWM/WDT/SPI 时最常见的错误。
+
+阅读建议：
+
+1. 先通读 `0` 到 `5` 节，建立“一个设备从类型到 MMIO 再到 IRQ”的完整图。
+2. 再重点读第 `6` 节，用 qtest 反推 G233 外设实现。
+3. 最后做第 `7` 节练习和附录 B 检查题。
 
 ---
 
 ## 一句话结论
 
-QEMU 外设建模不是“写几个寄存器读写函数”，而是把一个硬件外设拆成：`QOM 类型`、`设备状态`、`MMIO 寄存器协议`、`IRQ/timer/bus 副作用`、`machine 集成`、`迁移状态` 这条完整链路。
+QEMU 外设建模就是把“硬件手册里的一个外设”翻译成 QEMU 里的一个对象：它有类型、有状态、有 MMIO 寄存器协议、有 IRQ/timer/bus 副作用，并且必须被 machine 创建、映射地址、连接中断后，guest 才能真正访问到。
 
-🧠 我的理解：你后面做 SoC 模块时，GPIO、PWM、WDT、SPI 都可以套这条线。先把设备“长什么样”放进 state，再把 guest 的 `readl/writel` 转成 state 变化，最后把 IRQ、timer、下游 flash 这种副作用接出去。
+```text
+硬件外设
+  -> QOM 类型：这个设备叫什么、继承谁、怎么创建
+  -> State：设备当前有哪些寄存器和内部状态
+  -> MemoryRegionOps：guest 读写 MMIO 时调用什么函数
+  -> read/write：把寄存器访问翻译成状态变化
+  -> update_irq/update_timer/update_bus：处理副作用
+  -> machine 集成：把设备放进 SoC 地址空间并接到中断控制器
+```
+
+🧠 我的理解：你以后写 G233 的 GPIO/PWM/WDT/SPI，不要先问“这个 switch 怎么写”。先问：“这个外设有哪些状态？guest 能通过哪些寄存器观察或改变这些状态？哪些改变会引发 IRQ、timer 或下游设备行为？”
 
 ---
 
 ## 本章结构
 
 ```text
-QOM 类型注册
-  -> DeviceState / SysBusDevice / 自己的 State 结构体
-  -> instance_init: MMIO / IRQ / clock 骨架
-  -> class_init: realize / reset / vmstate / properties
-  -> MemoryRegionOps: read/write 寄存器协议
-  -> FIFO / IRQ / timer / bus side effect
-  -> machine: 地址映射、IRQ 连接、设备树暴露
-  -> qtest_readl/qtest_writel 从测试打到设备模型
+0. mental model
+   先知道：QEMU 外设不是一堆函数，而是一个可创建、可连接、可访问的对象。
+
+1. 外设模型是什么
+   TypeInfo / DeviceState / SysBusDevice / machine 集成
+
+2. 状态结构体怎么设计
+   寄存器影子、派生状态、FIFO、IRQ、timer、下游设备
+
+3. MMIO 和 MemoryRegionOps
+   guest 物理地址访问如何进入 read/write 回调
+
+4. read/write 怎么写
+   reset 默认值、只读、可写、W1C、mirror bit、write trigger
+
+5. IRQ / timer / bus 副作用
+   状态位不是 IRQ 线；timer 不是普通变量；SPI controller 不是 flash 本体
+
+6. SoC 测题映射
+   用 qtest 反推 GPIO/PWM/WDT/SPI 实现
+
+7. 最小练习
+   从 PL011 到 G233 GPIO，完整走一遍
+
+8. 下一章
+   主板建模流程、时钟系统、kernel 运行机制
 ```
 
-🎥 视频/作者：视频开头强调，很多人刚写 QEMU 设备时会把 QOM、MMIO、IRQ、设备树混在一起，不知道从哪开始。本章目的就是建立一条“设备建模主线”。
+🎥 视频/作者：视频开头指出，很多人刚开始写 QEMU 设备时，会把 QOM、MMIO、IRQ、设备树、machine 集成混在一起。本章最重要的目标，是建立一条可复用的“外设建模主线”。
 
-📘 讲义：讲义用 `PL011` UART 做例子，因为它是典型 `SysBusDevice`，同时包含寄存器、FIFO、IRQ、clock、chardev 和迁移状态。
+📘 讲义：讲义用 `PL011` UART 做样板。它是典型 `SysBusDevice`，有寄存器、FIFO、IRQ、clock、chardev、迁移状态，足够展示一个标准外设的骨架。
 
-🧠 我的理解：PL011 不只是串口例子，它是一块“外设建模样板板”。你以后写 GPIO 会砍掉 FIFO 和 chardev，写 PWM/WDT 会强化 timer，写 SPI 会把 FIFO/状态位/片选/下游 flash 做得更复杂。
+🧠 我的理解：PL011 不是让你背串口，而是让你学一套模板。GPIO 是简化版 PL011，PWM/WDT 是加 timer 的版本，SPI 是加下游 bus 和协议状态机的版本。
+
+---
+
+## 0. 学这章前先建立的 mental model
+
+先把三个角色分清楚。
+
+```text
+guest 软件
+  运行在虚拟 CPU 里，执行 load/store，认为自己在访问真实硬件寄存器。
+
+QEMU 地址空间
+  接住 guest 的物理地址访问，判断这个地址属于 RAM、ROM，还是某个 MMIO 设备。
+
+设备模型
+  一个 C 结构体加一组回调函数。它把 guest 的 read/write 翻译成设备状态变化。
+```
+
+举一个最小例子：
+
+```c
+qtest_writel(qts, GPIO_OUT, 0x1);
+```
+
+这行测试代码不是直接调用 `gpio_write()`。真实链路应该理解成：
+
+```text
+qtest_writel(qts, 0x10012004, 0x1)
+  -> QTest 协议请求 QEMU 写 guest 物理地址
+  -> QEMU 地址空间查找 0x10012004 属于哪个 MemoryRegion
+  -> 命中 G233 GPIO 的 MMIO 区域
+  -> 调用 gpio_write(opaque, offset=0x04, value=0x1, size=4)
+  -> gpio_write 更新 s->out
+  -> 重新计算 GPIO_IN / GPIO_IS / IRQ
+```
+
+🎥 视频/作者：视频里说，MMIO 表面像访存，本质是设备协议。guest 读写一个地址，触发的是设备逻辑，不是普通内存读写。
+
+📘 讲义：PL011 的核心流程是：QOM 注册类型、状态结构描述寄存器/FIFO/IRQ/clock、MMIO 回调响应访问、IRQ 连接到中断控制器、machine 侧完成地址映射。
+
+🧠 我的理解：本章所有 API 都服务于同一个问题：让 guest 的“物理地址读写”能够稳定地落到“你的设备状态机”上。
+
+🧩 补充知识：MMIO 的关键不是“地址”，而是“地址背后的语义”。同样是写 4 字节，写 RAM 表示保存数据；写 `GPIO_OUT` 表示驱动引脚；写 `WDT_KEY` 可能表示喂狗；写 `SPI_DR` 可能表示发起一次 SPI 传输。
+
+🔗 和 SoC 训练营的关系：G233 qtest 里的所有 `qtest_readl/qtest_writel` 都是这种链路。测试表面上读写地址，本质上是在验证你是否正确实现了设备协议。
+
+✅ 你现在就做：记住一句话：`qtest_writel` 不是函数单测，它是在模拟 guest 软件访问 MMIO 寄存器。
+
+⚠️ 容易踩坑：如果 qtest 失败，不要只盯着测试本身。失败可能来自 4 层：地址没映射、offset 算错、read/write 语义错、副作用没更新。
+
+你应该能回答：
+
+- 为什么 `qtest_writel` 最终会进入设备的 write 回调？
+- 为什么 MMIO write 不等于普通内存写？
+- 为什么设备模型必须被 machine 映射后 guest 才能看到？
+
+答不上来回看：本节的 qtest 链路图。
 
 ---
 
 ## 1. 外设模型在 QEMU 里是什么
 
-🎥 视频/作者：讲者把主线概括成：注册类型、定义状态、初始化硬件骨架、实现 MMIO 行为、补齐 FIFO 和中断、接入 machine、支持迁移。
+### 1.1 QEMU 外设不是裸函数，而是 QOM 对象
 
-📘 讲义：PL011 的实现位于 [hw/char/pl011.c](../hw/char/pl011.c)，状态定义在 [include/hw/char/pl011.h](../include/hw/char/pl011.h)。它通过 QOM 注册类型，父类是 `TYPE_SYS_BUS_DEVICE`。
+QEMU 有自己的对象系统，叫 QOM。你可以先把它理解成 C 语言写出来的“类和对象”机制。
 
-🧠 我的理解：QEMU 里的“外设”不是一个裸 C struct，也不是一组散函数。它是一个 QOM 对象。对象类型告诉 QEMU“我是什么设备”，状态结构体保存“我现在处于什么状态”，MMIO 回调定义“guest 读写我时发生什么”。
+一个外设模型至少要回答这些问题：
 
-🧩 补充知识：可以先记三层对象关系。
+| 问题 | QEMU 里的答案 |
+| --- | --- |
+| 这个设备叫什么？ | `TYPE_XXX` |
+| 它继承谁？ | `.parent = TYPE_SYS_BUS_DEVICE` |
+| 一个实例占多大内存？ | `.instance_size = sizeof(XXXState)` |
+| 创建实例时做什么？ | `.instance_init = xxx_init` |
+| 这个类型有哪些类级行为？ | `.class_init = xxx_class_init` |
+
+📘 讲义：PL011 的类型注册核心结构是：
+
+```c
+static const TypeInfo pl011_arm_info = {
+    .name          = TYPE_PL011,
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(PL011State),
+    .instance_init = pl011_init,
+    .class_init    = pl011_class_init,
+};
+```
+
+逐项解释：
+
+| 字段 | 含义 | 你写 G233 设备时怎么想 |
+| --- | --- | --- |
+| `.name` | QEMU 识别这个类型的名字 | 例如 `TYPE_G233_GPIO` |
+| `.parent` | 继承哪个父类 | SoC 内部 MMIO 外设通常是 `TYPE_SYS_BUS_DEVICE` |
+| `.instance_size` | 每个设备实例的 state 多大 | 你的 `G233GPIOState` 或 `G233SPIState` |
+| `.instance_init` | 对象刚创建时搭骨架 | 初始化 MMIO region、IRQ、clock |
+| `.class_init` | 设置这个类型的默认能力 | realize、reset、properties、vmstate |
+
+🎥 视频/作者：视频强调，如果没有类型注册，后面根本没法创建这个设备。`SysBusDevice` 也很关键，它说明这是 SoC 内部平台设备，不是 PCIe 那类可枚举总线设备。
+
+🧠 我的理解：`TypeInfo` 是设备的“出生证明”。没有它，QEMU 不知道这个设备类型存在；没有正确 parent，QEMU 也不知道它能不能被当作 sysbus 设备去映射 MMIO、连接 IRQ。
+
+### 1.2 `DeviceState` 和 `SysBusDevice` 是什么
+
+可以先看继承关系：
 
 ```text
 Object
   -> DeviceState
     -> SysBusDevice
-      -> 你的设备状态结构体，比如 G233GPIOState / G233PWMState
+      -> PL011State / G233GPIOState / G233PWMState / G233WDTState / G233SPIState
 ```
 
-🧩 补充知识：`SysBusDevice` 适合 SoC 内部平台设备，比如 UART、GPIO、timer、WDT、SPI controller。它通常不是可枚举总线设备，不像 PCIe 设备那样靠 PCI 配置空间发现，而是由 machine 直接创建、映射地址、连接 IRQ。
+`DeviceState` 表示“这是一个 QEMU 设备”。它让设备进入 QEMU 设备生命周期，比如 realize、reset、属性设置、迁移等。
 
-🔗 和 SoC 训练营的关系：G233 SoC 里的 GPIO、PWM、WDT、SPI 都更像 `SysBusDevice`。测试里用固定 MMIO 地址访问，例如 GPIO `0x10012000`、PWM `0x10015000`、WDT `0x10010000`、SPI `0x10018000`，这说明它们应该由 machine 明确映射到系统地址空间。
+`SysBusDevice` 表示“这是挂在系统总线上的设备”。它给设备提供 sysbus 相关能力，最重要的是：
 
-✅ 你现在就做：在脑子里把每个外设写成一句话：“这是一个 `SysBusDevice`，它暴露一块 MMIO 区域，里面有一组寄存器，guest 读写这些寄存器会改变设备状态，并可能触发 IRQ/timer/bus 行为。”
+- 可以注册 MMIO region。
+- 可以注册 IRQ 输出线。
+- 可以被 machine 用 `sysbus_realize_and_unref()` 激活。
+- 可以被 machine 用 `sysbus_connect_irq()` 接到中断控制器。
 
-⚠️ 容易踩坑：不要以为“写了设备 C 文件”设备就存在了。视频里特别强调，设备代码不等于设备已经接入 machine。没有 `qdev_new`、`sysbus_realize`、`memory_region_add_subregion`、`sysbus_connect_irq`，guest 看不到它。
+🧩 补充知识：SoC 内部外设一般不是“自动发现”的。真实 SoC 里，GPIO、UART、WDT 的地址通常写死在 datasheet 里；QEMU 也类似，machine 代码负责把这些设备放到固定地址。
+
+### 1.3 设备代码和设备存在是两回事
+
+一个常见误区是：我写了 `hw/gpio/g233_gpio.c`，设备就存在了。不是。
+
+设备真正被 guest 看见，需要 machine 做这些事：
+
+```c
+DeviceState *dev = qdev_new(TYPE_PL011);
+SysBusDevice *s = SYS_BUS_DEVICE(dev);
+
+sysbus_realize_and_unref(s, &error_fatal);
+memory_region_add_subregion(mem, base, sysbus_mmio_get_region(s, 0));
+sysbus_connect_irq(s, 0, irq_line);
+```
+
+这段表达的是：
+
+1. 创建一个设备对象。
+2. 把它当作 sysbus 设备。
+3. realize，让设备正式激活。
+4. 把设备 MMIO region 放进系统地址空间。
+5. 把设备 IRQ 输出接到中断控制器输入。
+
+🔗 和 SoC 训练营的关系：G233 测试用固定地址访问外设：
+
+| 设备 | base |
+| --- | --- |
+| WDT | `0x10010000` |
+| GPIO | `0x10012000` |
+| PWM | `0x10015000` |
+| SPI | `0x10018000` |
+
+这些地址只有在 machine 中映射过，qtest 才能访问到。否则 read/write 可能打到 unmapped 区域，或者根本不会进入你的设备回调。
+
+✅ 你现在就做：看一个设备时，分两步问：
+
+```text
+设备内部：TypeInfo / State / MMIO / IRQ 实现了吗？
+machine 外部：创建 / realize / map / connect IRQ 做了吗？
+```
+
+⚠️ 容易踩坑：设备内部写得再对，如果 machine 没接进去，qtest 仍然失败。反过来，machine 地址映射对了，但 read/write 语义错，qtest 也失败。
+
+你应该能回答：
+
+- `DeviceState` 和 `SysBusDevice` 的区别是什么？
+- 为什么 SoC 内部 GPIO/WDT/SPI 更适合 `SysBusDevice`？
+- 为什么“写了设备文件”不等于“guest 能看到设备”？
+
+答不上来回看：`1.2` 和 `1.3`。
 
 ---
 
 ## 2. 设备状态结构体怎么设计
 
-🎥 视频/作者：视频里反复强调一个点：设备建模本质上是状态建模。guest 看到的所有行为，本质都是设备内部状态变化后的结果。
+### 2.1 设备建模本质是状态建模
 
-📘 讲义：PL011 的状态结构体里有这些典型成员：`SysBusDevice parent_obj`、`MemoryRegion iomem`、寄存器状态、FIFO 状态、`CharFrontend chr`、多条 `qemu_irq`、`Clock *clk`、迁移相关字段。
+🎥 视频/作者：视频里强调，设备建模本身就是状态建模。guest 看到的所有行为，本质都是设备内部状态变化后的结果。
 
-🧠 我的理解：设计 state 结构体时，不要先按“函数怎么写”思考，要先按“硬件有哪些状态”思考。
+这句话非常重要。你写外设时，不要先写 `switch (offset)`，而要先设计 state。
 
-```text
-设备身份：parent_obj
-MMIO 入口：MemoryRegion iomem
-寄存器影子：ctrl/status/enable/pending/load/value 等字段
-内部队列：FIFO、buffer、读写指针
-外部连线：qemu_irq、Clock、下游设备指针
-时间行为：QEMUTimer、周期、deadline、计数值
-迁移状态：哪些字段需要保存和恢复
+📘 讲义：PL011 的状态结构体节选：
+
+```c
+struct PL011State {
+    SysBusDevice parent_obj;
+    MemoryRegion iomem;
+    uint32_t flags;
+    uint32_t lcr;
+    uint32_t cr;
+    uint32_t int_enabled;
+    uint32_t int_level;
+    uint32_t read_fifo[PL011_FIFO_DEPTH];
+    int read_pos;
+    int read_count;
+    CharFrontend chr;
+    qemu_irq irq[6];
+    Clock *clk;
+};
 ```
 
-🧩 补充知识：并不是每个寄存器都必须有一个同名字段。有些寄存器是“真实存储”，比如 `GPIO_DIR`、`SPI_CR1`；有些寄存器是“派生视图”，比如 `GPIO_IN` 可以由 `DIR/OUT/外部输入` 计算出来，`WDT_VAL` 可以由 timer 和 load 计算出来。
+这不是随便堆字段。每类字段都有职责：
 
-🔗 和 SoC 训练营的关系：你的 G233 设备 state 可以这样分。
+| 字段类型 | 例子 | 职责 |
+| --- | --- | --- |
+| 父类对象 | `SysBusDevice parent_obj` | 让这个 struct 能作为 QOM/sysbus 设备 |
+| MMIO 入口 | `MemoryRegion iomem` | guest 地址访问进入设备的入口 |
+| 寄存器影子 | `flags/lcr/cr` | 保存 guest 可读写的寄存器状态 |
+| 中断状态 | `int_enabled/int_level` | 分离中断使能和中断原因 |
+| FIFO 状态 | `read_fifo/read_pos/read_count` | 表达 UART 收发缓冲行为 |
+| 外部连接 | `qemu_irq irq[]`、`Clock *clk` | 连接中断控制器和时钟输入 |
+| 后端资源 | `CharFrontend chr` | 连接终端、socket、文件等串口后端 |
 
-| 设备 | state 里必须先想清楚的东西 |
-| --- | --- |
-| GPIO | `dir/out/in/ie/is/trig/pol`，上一拍输入值，IRQ 线 |
-| PWM | 全局寄存器、4 个 channel 的 `ctrl/period/duty/cnt/done`，timer |
-| WDT | `ctrl/load/val/status/locked`，feed key，timeout timer，IRQ 线 |
-| SPI | `cr1/cr2/sr/dr`，RX/TX 状态，当前 CS，flash 子设备，overrun 状态，IRQ 线 |
+🧠 我的理解：state 结构体就是你的“硬件抽象”。你不需要模拟晶体管，但必须把 guest 能观察到的行为所依赖的状态保存下来。
 
-✅ 你现在就做：先不要写 read/write。拿一张纸只写 state 字段，并标注每个字段属于“寄存器值”“派生状态”“外部连线”“timer 状态”中的哪一类。
+### 2.2 state 字段分 5 类
 
-⚠️ 容易踩坑：状态字段不清楚，后面 read/write 一定会变成一坨 if/switch。尤其是中断，不能只用一个 `bool irq_pending` 糊过去，要分清“中断原因”“中断使能”“最终 IRQ 线电平”。
+写 G233 外设时，建议把字段分成 5 类。
+
+| 类别 | 解释 | G233 例子 |
+| --- | --- | --- |
+| 寄存器影子 | guest 写了以后可再读回 | `GPIO_DIR`、`SPI_CR1`、`WDT_LOAD` |
+| 派生状态 | 由其他状态算出来 | `GPIO_IN`、`PWM_GLB.CH_EN`、`WDT_VAL` |
+| sticky 状态 | 事件发生后保持，直到软件清除 | `GPIO_IS`、`WDT_SR.TIMEOUT`、`SPI_SR.OVERRUN` |
+| 外部连线 | 连接到 QEMU 其他对象 | `qemu_irq irq`、flash child、clock |
+| 时间状态 | 需要虚拟时间推进 | PWM counter、WDT countdown、flash busy |
+
+### 2.3 不要把每个寄存器都机械变成字段
+
+有些寄存器适合有字段，有些不适合。
+
+例子 1：`GPIO_DIR` 适合有字段。
+
+```c
+s->dir = value;
+```
+
+它是 guest 写入的配置，读回来也应该看到同样的方向位。
+
+例子 2：`GPIO_IN` 不一定适合直接可写字段。
+
+```text
+GPIO_IN = 外部输入位 + 输出模式下的 OUT 回读
+```
+
+如果 pin 配成 output，测试期望写 `GPIO_OUT` 后读 `GPIO_IN` 能反映输出。这时 `GPIO_IN` 更像派生视图。
+
+例子 3：`PWM_GLB.CH_EN` 是 mirror bit。
+
+```text
+PWM_GLB.CH_EN(n) = channels[n].ctrl.EN
+```
+
+它不是独立状态，而是 channel ctrl 的镜像。
+
+🧩 补充知识：硬件寄存器表是软件接口，不等于内部实现。QEMU 设备模型应该模拟接口语义，不是机械地给每个 offset 一个变量。
+
+### 2.4 reset 默认值放在哪里
+
+`reset` 是设备回到硬件复位状态的地方。reset 应该集中设置：
+
+- 寄存器默认值。
+- FIFO 清空。
+- sticky 状态清除。
+- timer 停止或重新装载。
+- IRQ 线拉低。
+
+伪代码：
+
+```c
+static void g233_gpio_reset(DeviceState *dev)
+{
+    G233GPIOState *s = G233_GPIO(dev);
+
+    s->dir = 0;
+    s->out = 0;
+    s->ie = 0;
+    s->is = 0;
+    s->trig = 0;
+    s->pol = 0;
+    g233_gpio_update_irq(s);
+}
+```
+
+🔗 和 SoC 训练营的关系：`test-gpio-basic` 第一项就是 reset 默认值。它会读 `GPIO_DIR/OUT/IN/IE/IS/TRIG/POL`，全部期望为 0。这个测试本质是在问：你的 reset 语义集中且完整吗？
+
+✅ 你现在就做：实现任何外设前，先写 state 设计表。
+
+| 字段 | 来源 | reset 默认值 | 是否迁移 | 是否派生 |
+| --- | --- | --- | --- | --- |
+| `dir` | `GPIO_DIR` | `0` | 是 | 否 |
+| `out` | `GPIO_OUT` | `0` | 是 | 否 |
+| `is` | `GPIO_IS` | `0` | 是 | 否，sticky |
+| `irq` | machine 连接 | 拉低 | 否 | 外部线 |
+
+⚠️ 容易踩坑：把 reset 默认值散落在 `instance_init`、`realize`、`write` 里。这样后面系统 reset、qtest 重启、迁移恢复时很容易状态不一致。
+
+你应该能回答：
+
+- state 结构体为什么不是“寄存器表照抄”？
+- 哪些状态应该保存，哪些状态应该计算？
+- reset 应该清哪些东西？
+
+答不上来回看：`2.2` 到 `2.4`。
 
 ---
 
 ## 3. MMIO 和 MemoryRegionOps
 
-🎥 视频/作者：视频里有一句特别适合记住：MMIO 表面上像访存，本质上是设备协议。guest 的 load/store 不是真的读写 RAM，而是在触发设备行为。
+### 3.1 MMIO 是设备协议，不是普通内存
 
-📘 讲义：PL011 通过 `MemoryRegionOps` 暴露 read/write 入口，指定小端，访问宽度是 4 字节。`memory_region_init_io` 把回调和设备 state 绑定起来，`sysbus_init_mmio` 把这块区域挂到 sysbus 设备上。
+MMIO 全称是 memory-mapped I/O。它的形式像内存访问：
 
-🧠 我的理解：`MemoryRegionOps` 是“地址空间”和“设备模型”的接口。guest 访问某个物理地址时，QEMU 地址空间查找会发现这段地址属于你的 `MemoryRegion`，然后调用你的 `.read` 或 `.write`。
-
-```text
-qtest_writel(qts, GPIO_OUT, 1)
-  -> QTest 协议发给 QEMU
-  -> QEMU 对 guest 物理地址执行写访问
-  -> 地址空间命中 GPIO 的 MemoryRegion
-  -> 调用 gpio_write(opaque, offset, value, size)
-  -> offset = 0x04，value = 1
-  -> 更新 GPIO state，必要时更新 IRQ
+```c
+qtest_writel(qts, 0x10012004, 0x1);
 ```
 
-🧩 补充知识：`opaque` 通常就是你的设备 state。`offset` 是相对 MMIO base 的偏移，不是绝对物理地址。比如 GPIO base 是 `0x10012000`，guest 写 `0x10012004`，回调里通常看到的是 `offset = 0x04`。
-
-🔗 和 SoC 训练营的关系：qtest 里所有 `qtest_readl/qtest_writel` 最终都在逼你实现正确的 `MemoryRegionOps`。如果 `GPIO_OUT` 写了以后 `GPIO_IN` 读不到变化，不是 qtest 神秘，而是你的 write 回调没有更新 state，或 read 回调没有正确组合返回值。
-
-✅ 你现在就做：找一个测试地址，手工算一次 offset。
+但语义不是“把 1 存到内存地址 `0x10012004`”。它表示：
 
 ```text
-GPIO_BASE = 0x10012000
-GPIO_IS   = GPIO_BASE + 0x10
-write callback 里看到的 offset 应该是 0x10
+guest 写 GPIO_OUT 寄存器
+  -> 设备输出值改变
+  -> 可能影响 GPIO_IN 回读
+  -> 可能触发 edge/level interrupt
 ```
 
-⚠️ 容易踩坑：不要在回调里拿绝对地址做 switch。正确习惯是对 `offset` 做 switch。这样设备 base 改了也不用改设备内部逻辑。
+🎥 视频/作者：视频强调，读写 MMIO 的重点不是地址本身，而是寄存器语义和副作用。读一个寄存器可能清状态位，写一个寄存器可能触发中断或传输。
+
+### 3.2 MemoryRegion 是地址空间里的“门牌”
+
+设备要让 guest 访问，必须创建一块 `MemoryRegion`。
+
+📘 讲义：PL011 在 `instance_init` 里初始化 MMIO：
+
+```c
+memory_region_init_io(&s->iomem, OBJECT(s), &pl011_ops, s, "pl011", 0x1000);
+sysbus_init_mmio(sbd, &s->iomem);
+```
+
+逐项解释：
+
+| 参数/调用 | 含义 |
+| --- | --- |
+| `&s->iomem` | 设备自己的 MMIO 区域 |
+| `OBJECT(s)` | 这个 region 属于哪个 QOM 对象 |
+| `&pl011_ops` | guest 读写时调用哪些函数 |
+| `s` | 传给 read/write 的 opaque，通常就是 state |
+| `"pl011"` | region 名字，方便调试 |
+| `0x1000` | 这个设备 MMIO 窗口大小 |
+| `sysbus_init_mmio` | 告诉 SysBusDevice：我有一个 MMIO region |
+
+🧠 我的理解：`MemoryRegion` 是设备在 QEMU 地址空间里的入口，但它此时还没有具体物理地址。真正放到 `0x10012000` 这种地址，是 machine 做的。
+
+### 3.3 MemoryRegionOps 是 read/write 函数表
+
+📘 讲义：PL011 的 `MemoryRegionOps`：
+
+```c
+static const MemoryRegionOps pl011_ops = {
+    .read = pl011_read,
+    .write = pl011_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl.min_access_size = 4,
+    .impl.max_access_size = 4,
+};
+```
+
+这表示：
+
+- guest 读这个 region 时，调用 `pl011_read`。
+- guest 写这个 region 时，调用 `pl011_write`。
+- 设备按小端解释数据。
+- 最小/最大访问粒度是 4 字节。
+
+G233 外设大多数测试都用 `qtest_readl/qtest_writel`，也就是 32-bit little-endian 访问。你的设备可以先支持 4 字节访问，其他 size 返回默认值或按 QEMU 习惯处理。
+
+### 3.4 offset 是相对地址
+
+这是初学者最容易写错的地方。
+
+如果测试写：
+
+```c
+#define GPIO_BASE 0x10012000ULL
+#define GPIO_OUT  (GPIO_BASE + 0x04)
+
+qtest_writel(qts, GPIO_OUT, 0x1);
+```
+
+你的 write 回调里应该看到：
+
+```text
+addr/offset = 0x04
+value       = 0x1
+size        = 4
+```
+
+不是 `0x10012004`。
+
+所以设备内部 switch 应该写：
+
+```c
+switch (offset) {
+case 0x04:
+    s->out = value;
+    break;
+}
+```
+
+不要写：
+
+```c
+case 0x10012004:
+```
+
+🔗 和 SoC 训练营的关系：GPIO、WDT、PWM、SPI 都在测试里定义了 base。base 是 machine 映射地址；设备 read/write 只管 base 内部 offset。
+
+✅ 你现在就做：手工算三个 offset。
+
+```text
+WDT_SR  = 0x10010000 + 0x10 -> write 回调 offset 0x10
+GPIO_IE = 0x10012000 + 0x0C -> write 回调 offset 0x0C
+SPI_DR  = 0x10018000 + 0x0C -> write 回调 offset 0x0C
+```
+
+⚠️ 容易踩坑：把 machine base 和设备内部 offset 混在一起。结果是设备换个 base 就坏，或者 qtest 永远打不到正确 case。
+
+你应该能回答：
+
+- `memory_region_init_io` 做了什么？
+- `sysbus_init_mmio` 和 `memory_region_add_subregion` 区别是什么？
+- read/write 回调里的 offset 为什么不是绝对地址？
+
+答不上来回看：`3.2` 到 `3.4`。
 
 ---
 
 ## 4. 寄存器行为怎么写成 read/write
 
-🎥 视频/作者：视频强调“重点不是地址，而是寄存器语义和副作用”。读某个寄存器可能清状态位，写某个寄存器可能触发中断，写 data register 可能启动一次传输。
+### 4.1 read/write 的基本模板
 
-📘 讲义：PL011 的 read/write 会解析寄存器偏移，更新 flags、FIFO 和中断状态。FIFO 深度受 `LCR_FEN` 控制，中断由 `int_level & int_enabled` 决定，最后映射到多条 IRQ 线。
+设备 read/write 的工作不是“保存值”，而是实现寄存器协议。
 
-🧠 我的理解：写寄存器时可以按这套顺序拆。
-
-```text
-1. offset 是否合法
-2. size 是否符合设备要求
-3. value 哪些 bit 可写，哪些 bit 只读，哪些 bit 保留
-4. 写入是否改变内部状态
-5. 是否有副作用，比如清中断、启动 timer、发送 SPI 字节
-6. 是否需要调用 update_irq / update_status / update_timer
-```
-
-🧩 补充知识：常见寄存器语义要单独建模。
-
-| 语义 | 写法要点 |
-| --- | --- |
-| reset 默认值 | `reset()` 里统一恢复，别散落在 init 和 write 里 |
-| read-only | write 忽略，read 返回内部状态或派生值 |
-| write-only | read 返回 0、保留值，或按规格返回 |
-| RW mask | 只接受可写 bit，保留 bit 不应被 guest 写脏 |
-| W1C | `reg &= ~(value & clear_mask)`，不是 `reg = value` |
-| mirror bit | 由别的状态计算，别让 guest 随便写 |
-| write trigger | 写入某个 magic value 或 data register 会触发动作 |
-
-🔗 和 SoC 训练营的关系：这些语义会直接出现在测试里。
-
-| 测试 | 寄存器语义 |
-| --- | --- |
-| `test-gpio-basic` | reset 默认值、`GPIO_IN` 派生读、`DIR/OUT` 可写 |
-| `test-gpio-int` | `GPIO_IS` W1C，edge/level/polarity，IE mask |
-| `test-pwm-basic` | `PWM_GLB` mirror bit，DONE W1C，CNT read-only |
-| `test-wdt-timeout` | `WDT_VAL` read-only，`WDT_KEY` magic value，`WDT_SR` W1C |
-| `test-spi-jedec` | `SPI_DR` 写触发传输，读 `SPI_DR` 消耗 RX 数据 |
-| `test-spi-overrun` | `SPI_SR.OVERRUN` W1C，RXNE 未清又收到新字节触发错误 |
-
-✅ 你现在就做：给 `GPIO_IS` 写一个伪代码。
+一个靠谱的 write 模板：
 
 ```c
-case GPIO_IS:
-    /* Edge interrupt status is write-1-to-clear. */
-    s->is &= ~(value & s->is_w1c_mask);
-    gpio_update_irq(s);
-    break;
+static void g233_xxx_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    G233XXXState *s = opaque;
+
+    if (size != 4) {
+        return;
+    }
+
+    switch (offset) {
+    case REG_CTRL:
+        s->ctrl = value & CTRL_WRITABLE_MASK;
+        xxx_update_after_ctrl_write(s);
+        break;
+    case REG_STATUS:
+        s->status &= ~(value & STATUS_W1C_MASK);
+        xxx_update_irq(s);
+        break;
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "bad write offset 0x%" HWADDR_PRIx "\n", offset);
+        break;
+    }
+}
 ```
 
-⚠️ 容易踩坑：W1C 最容易被写成普通赋值。这样 `qtest_writel(qts, GPIO_IS, 0x1)` 之后状态不但没清，可能还被错误写成 `1`。
+一个靠谱的 read 模板：
+
+```c
+static uint64_t g233_xxx_read(void *opaque, hwaddr offset, unsigned size)
+{
+    G233XXXState *s = opaque;
+
+    if (size != 4) {
+        return 0;
+    }
+
+    switch (offset) {
+    case REG_CTRL:
+        return s->ctrl;
+    case REG_STATUS:
+        return xxx_compute_status(s);
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "bad read offset 0x%" HWADDR_PRIx "\n", offset);
+        return 0;
+    }
+}
+```
+
+🧠 我的理解：这个模板里最重要的是两件事：mask 和 update。mask 控制哪些 bit 真的可写；update 把寄存器变化传播到 IRQ、timer、下游 bus 等副作用。
+
+### 4.2 常见寄存器语义
+
+| 语义 | 含义 | 实现方式 |
+| --- | --- | --- |
+| RW | 可读可写 | 写入 state，读回 state |
+| RO | 只读 | write 忽略，read 返回 state 或计算值 |
+| WO | 只写 | write 触发动作，read 返回 0 或固定值 |
+| W1C | 写 1 清除 | `reg &= ~(value & mask)` |
+| mirror bit | 镜像其他状态 | read 时计算，不独立保存 |
+| write trigger | 写入触发动作 | write case 中调用动作函数 |
+| reserved bit | 保留位 | write mask 掉，read 返回 0 或固定值 |
+
+### 4.3 W1C 是什么
+
+W1C 是 write-one-to-clear。意思是：软件写 1 的 bit 被清掉，写 0 的 bit 不变。
+
+正确写法：
+
+```c
+s->status &= ~(value & STATUS_W1C_MASK);
+```
+
+错误写法：
+
+```c
+s->status = value;
+```
+
+为什么硬件喜欢 W1C？因为状态位可能由硬件异步置位。软件清某个 bit 时，不应该误清其他同时发生的事件。
+
+🔗 和 SoC 训练营的关系：
+
+- `GPIO_IS`：edge interrupt status，测试会写 `1` 清除。
+- `PWM_GLB.CH_DONE`：周期完成标志，测试会写 `1` 清除。
+- `WDT_SR.TIMEOUT`：超时标志，测试会写 `1` 清除。
+- `SPI_SR.OVERRUN`：溢出错误，测试会写 `1` 清除。
+
+### 4.4 read 也可能有副作用
+
+不是所有 read 都是无副作用的。SPI 是典型例子。
+
+`SPI_DR` 的读语义通常是：
+
+```text
+如果 RX buffer 有数据
+  -> 返回这个 byte
+  -> 清 RXNE
+  -> 可能允许下一次传输不 overrun
+```
+
+所以 `test-spi-jedec` 中：
+
+```c
+qtest_writel(qts, SPI_DR, tx);
+...
+return (uint8_t)qtest_readl(qts, SPI_DR);
+```
+
+这不是普通读回，而是从 SPI receive data register 取走一个接收字节。
+
+### 4.5 write trigger 是什么
+
+write trigger 指写某个寄存器不是为了保存值，而是为了触发动作。
+
+| 设备 | 触发写 | 动作 |
+| --- | --- | --- |
+| WDT | `WDT_KEY = 0x5A5A5A5A` | feed，重新装载计数器 |
+| WDT | `WDT_KEY = 0x1ACCE551` | lock，后续控制写可能被忽略 |
+| SPI | `SPI_DR = byte` | 发起一次 SPI byte transfer |
+| GPIO | `GPIO_OUT` 变化 | 可能触发 edge/level interrupt |
+
+🧩 补充知识：触发写通常不要简单保存 `value`。比如 `WDT_KEY` 不需要读回 magic value，它的意义是“执行喂狗或锁定动作”。
+
+### 4.6 read/write 写完必须更新副作用
+
+很多寄存器写入后，需要立即更新相关状态。
+
+```text
+写 GPIO_IE
+  -> 中断使能变化
+  -> 需要 gpio_update_irq()
+
+写 GPIO_OUT
+  -> pin 电平变化
+  -> 需要判断 edge/level
+  -> 可能设置 GPIO_IS
+  -> 需要 gpio_update_irq()
+
+写 PWM_CH_CTRL.EN
+  -> channel 启停变化
+  -> 需要更新 PWM_GLB mirror
+  -> 需要启动或停止 timer
+
+写 WDT_CTRL.EN
+  -> watchdog 启停变化
+  -> 需要启动或停止 timer
+```
+
+✅ 你现在就做：看到任何寄存器写入，都问三个问题。
+
+```text
+这个值要不要保存？
+这个值哪些 bit 允许保存？
+保存后会不会影响 IRQ/timer/bus/派生寄存器？
+```
+
+⚠️ 容易踩坑：只写 `s->reg = value`，没有 mask、没有 W1C、没有 update。这样的模型可能过最简单的读回测试，但会在 interrupt、timer、overrun 这种测试里失败。
+
+你应该能回答：
+
+- W1C 为什么不能写成普通赋值？
+- `SPI_DR` 为什么既是 data register 又是传输触发点？
+- `GPIO_IN` 和 `PWM_GLB.CH_EN` 为什么可能是派生值？
+
+答不上来回看：`4.2` 到 `4.6`。
 
 ---
 
 ## 5. IRQ / timer / bus 这些副作用怎么理解
 
-🎥 视频/作者：视频里把中断拆成三个层次：事件发生、更新内部状态位、把状态位投影到 IRQ 线。IRQ 线只看最终结果，真正原因在设备内部。
+### 5.1 IRQ：中断线是内部状态的投影
 
-📘 讲义：PL011 维护 `int_level` 和 `int_enabled`，再用 mask 把不同中断原因映射到多条 IRQ 线，最后通过 `qemu_set_irq` 拉高或拉低。
+🎥 视频/作者：视频把中断拆成三层：事件发生、更新状态位、把状态位映射到 IRQ 线。IRQ 线只看最终结果，真正原因在设备内部。
 
-🧠 我的理解：副作用不要直接塞在 read/write 的局部逻辑里，最好有统一的 update 函数。
+📘 讲义：PL011 维护 `int_level` 与 `int_enabled`，再计算最终输出：
+
+```c
+flags = s->int_level & s->int_enabled;
+qemu_set_irq(s->irq[i], (flags & irqmask[i]) != 0);
+```
+
+这段代码的关键思想是：
 
 ```text
-gpio_update_irq(s)
-  -> 看 IS 和 IE
-  -> 算出 active
+中断原因 int_level
+  & 中断使能 int_enabled
+  -> 最终是否拉高 IRQ 线
+```
+
+🧠 我的理解：不要把“状态位”和“IRQ 线”混成一个变量。状态位是设备内部原因；IRQ 线是向外部中断控制器报告的电平。
+
+G233 GPIO 可以这样设计：
+
+```text
+pin 变化
+  -> 根据 TRIG/POL 判断是否满足触发条件
+  -> 如果 IE 允许，设置 IS
+  -> active = (IS & IE) != 0
   -> qemu_set_irq(s->irq, active)
-
-pwm_update_timer(s, ch)
-  -> 看 EN / PERIOD / DUTY
-  -> 重新安排 QEMUTimer
-
-spi_do_transfer(s, tx)
-  -> 看 SPE / MSTR / CS
-  -> 找到下游 flash
-  -> 更新 RXNE/TXE/OVERRUN
-  -> 可能更新 IRQ
 ```
 
-🧩 补充知识：timer 和 IRQ 的关系很常见。PWM 的 counter、WDT 的 countdown、SPI flash 的 busy 都不是“写完寄存器立刻静态返回”能表达完整的，它们需要虚拟时间推进。qtest 里的 `qtest_clock_step` 就是在驱动这些虚拟时间事件。
+### 5.2 PLIC pending 不是设备自己直接写出来的
 
-🔗 和 SoC 训练营的关系：`test-pwm-basic`、`test-wdt-timeout`、`test-spi-overrun` 都会用 `qtest_clock_step`。这说明测试不是只看寄存器保存值，还在验证你有没有把 timer 和状态转换接起来。
-
-✅ 你现在就做：每个设备都先设计一个 `update_xxx()`。
+在 RISC-V SoC 里，外设一般把 IRQ 线接到 PLIC。设备调用 `qemu_set_irq()` 拉高线，PLIC 模型看到输入变化后设置 pending。
 
 ```text
-GPIO: gpio_update_input_and_irq()
-PWM:  pwm_update_channel_timer()
-WDT:  wdt_update_timer_and_irq()
-SPI:  spi_update_status_and_irq()
+G233 GPIO
+  -> qemu_set_irq(gpio_irq, 1)
+  -> PLIC input IRQ 2 active
+  -> PLIC_PENDING 对应 bit 变成 1
+  -> qtest 读 PLIC_PENDING 看到 pending
 ```
 
-⚠️ 容易踩坑：不要在 5 个 write case 里各自手写一份 IRQ 计算。后面修一个 bit 的时候会漏。统一 update 函数是防止寄存器副作用失控的保险丝。
+🔗 和 SoC 训练营的关系：`test-gpio-int` 检查 GPIO PLIC IRQ 2，`test-wdt-timeout` 检查 WDT PLIC IRQ 4，`test-spi-overrun` 检查 SPI PLIC IRQ 5。
+
+⚠️ 容易踩坑：在 GPIO 设备里直接改 PLIC 内部状态。这是错误方向。设备应该输出 IRQ 线；PLIC 负责 pending/claim/complete。
+
+### 5.3 timer：虚拟时间驱动设备状态
+
+PWM 和 WDT 不能只靠寄存器保存值。它们的行为依赖时间。
+
+qtest 中的时间推进：
+
+```c
+qtest_clock_step(qts, 100000000);
+```
+
+含义是推进 QEMU 虚拟时钟。你的设备如果用 `QEMUTimer` 挂在正确时钟上，timer callback 就会在虚拟时间到期时运行。
+
+WDT 的典型流程：
+
+```text
+write WDT_LOAD
+write WDT_CTRL.EN
+  -> timer_mod() 安排 timeout
+qtest_clock_step()
+  -> timer callback 到期
+  -> s->sr |= WDT_SR_TIMEOUT
+  -> 如果 INTEN，qemu_set_irq(s->irq, 1)
+```
+
+PWM 的典型流程：
+
+```text
+write PERIOD/DUTY
+write CTRL.EN
+  -> 启动 channel timer
+qtest_clock_step()
+  -> counter 增长
+  -> period 完成后设置 DONE
+```
+
+🧩 补充知识：`QEMUTimer` 是软件调度机制；`Clock` QOM 对象是硬件时钟树建模。下一章“时钟系统”会更系统地讲。本章先掌握：需要时间推进的外设，不能只用普通变量。
+
+### 5.4 bus side effect：SPI controller 不是 flash
+
+SPI 题最容易混淆。SPI controller 和 SPI flash 是两个东西。
+
+```text
+guest
+  -> 写 SPI controller 的 SPI_DR
+  -> SPI controller 根据 CR2 选择 CS0/CS1
+  -> 把 byte 发送给对应 flash 模型
+  -> flash 返回一个 byte
+  -> controller 更新 RXNE/TXE/OVERRUN
+```
+
+SPI controller 负责：
+
+- `CR1`：enable、master、interrupt enable。
+- `CR2`：chip select。
+- `SR`：RXNE、TXE、OVERRUN。
+- `DR`：发送/接收数据寄存器。
+
+flash 负责：
+
+- JEDEC ID。
+- READ STATUS。
+- READ DATA。
+- PAGE PROGRAM。
+- SECTOR ERASE。
+- busy 状态。
+- 每片 flash 的独立存储容量和内容。
+
+🔗 和 SoC 训练营的关系：`test-spi-cs` 会验证 CS0/CS1 两片 flash 的 JEDEC ID、容量、数据隔离。如果你只在 SPI controller 里用一个全局 buffer 假装 flash，很可能过不了这个测试。
+
+✅ 你现在就做：每次写副作用逻辑时，把它归类。
+
+```text
+IRQ side effect：状态变化后拉高/拉低中断线
+timer side effect：状态变化后启动/停止/重排 timer
+bus side effect：状态变化后访问下游设备
+```
+
+⚠️ 容易踩坑：把副作用直接散落在每个 read/write case 里。更好的方式是集中到 `update_irq()`、`update_timer()`、`do_transfer()` 这类函数。
+
+你应该能回答：
+
+- 为什么 IRQ 线不是中断原因本身？
+- 为什么 `qtest_clock_step` 能测 PWM/WDT？
+- SPI controller 和 SPI flash 的职责边界是什么？
+
+答不上来回看：`5.1` 到 `5.4`。
 
 ---
 
 ## 6. 对 SoC 测题的直接帮助
 
-这一节是本章最实战的部分：你不是为了“懂 PL011”而学 PL011，而是为了知道 G233 外设题该怎么拆。
+这一节按 qtest 反推设备模型。你后面做题时，先读测试，再回到这里找对应能力。
 
-### `test-gpio-basic`
+### 6.1 `test-gpio-basic`
 
-🎥 视频/作者：视频强调 state 是设备行为的本体。GPIO 这题最适合练“寄存器值和派生值”的区别。
+测试覆盖：
 
-📘 讲义：PL011 把寄存器、FIFO、中断状态放在 state 中；GPIO 可以照这个方法，把 `DIR/OUT/IE/IS/TRIG/POL` 放入 state。
+- `g233/gpio/reset_value`
+- `g233/gpio/direction`
+- `g233/gpio/output`
+- `g233/gpio/multi_pin`
 
-🧠 我的理解：`GPIO_IN` 不一定是一个普通可写字段。测试里设置 `GPIO_DIR` 为 output 后写 `GPIO_OUT`，再读 `GPIO_IN`，期望输出 pin 能反映到输入视图。也就是说 read 回调里要组合 state，而不是只返回一个旧变量。
+寄存器：
 
-🔗 和 SoC 训练营的关系：`test-gpio-basic` 检查 reset 默认值、方向寄存器、多 pin 位操作、`OUT -> IN` 反映。它对应本章的“状态结构体设计”和“read/write 回调”。
+| offset | name | 语义 |
+| --- | --- | --- |
+| `0x00` | `GPIO_DIR` | 方向，`0=input`，`1=output` |
+| `0x04` | `GPIO_OUT` | 输出数据 |
+| `0x08` | `GPIO_IN` | 输入数据，只读视图 |
+| `0x0C` | `GPIO_IE` | 中断使能 |
+| `0x10` | `GPIO_IS` | 中断状态，W1C |
+| `0x14` | `GPIO_TRIG` | `0=edge`，`1=level` |
+| `0x18` | `GPIO_POL` | `0=low/falling`，`1=high/rising` |
 
-✅ 你现在就做：先画寄存器表，再写 `gpio_read()` 的 `GPIO_IN` 分支，确认它不是盲目返回 `s->in`。
+🎥 视频/作者：视频强调“状态结构就是设备本体”。GPIO basic 就是在检查最基础的状态是否可靠。
 
-⚠️ 容易踩坑：`GPIO_OUT` 写了，`GPIO_IN` 没变。这个 bug 的本质是没有把硬件“输出回读”的派生关系建模出来。
+🧠 我的理解：这题不是考复杂中断，而是考你能否把最基本的寄存器状态和派生读写做对。
 
-### `test-gpio-int`
+实现思路：
 
-🎥 视频/作者：视频说中断线是内部状态的投影。GPIO interrupt 正好是这个观点的练习题。
+```c
+typedef struct G233GPIOState {
+    SysBusDevice parent_obj;
+    MemoryRegion iomem;
+    uint32_t dir;
+    uint32_t out;
+    uint32_t ie;
+    uint32_t is;
+    uint32_t trig;
+    uint32_t pol;
+    qemu_irq irq;
+} G233GPIOState;
+```
 
-📘 讲义：PL011 的中断不是一个裸 bool，而是 `int_level & int_enabled` 再映射到 IRQ 线。
+read 关键点：
 
-🧠 我的理解：GPIO interrupt 至少要分四层：输入变化事件、`IS` 状态位、`IE` 使能、PLIC IRQ 线。edge/level、rising/falling/high/low 都是在决定“什么时候设置或清除 IS”。
+```c
+case GPIO_IN:
+    return gpio_compute_input(s);
+```
 
-🔗 和 SoC 训练营的关系：`test-gpio-int` 会检查 rising edge、level high、W1C 清 `GPIO_IS`、IE mask、PLIC IRQ 2 pending/claim/complete。它对应本章的“中断状态分层”和“machine IRQ 连接”。
+`GPIO_IN` 应该能反映 output pin 的 `OUT` 值。简单模型里可以先做：
 
-✅ 你现在就做：给 GPIO 写一个统一流程。
+```c
+static uint32_t gpio_compute_input(G233GPIOState *s)
+{
+    return s->out & s->dir;
+}
+```
+
+🔗 和 SoC 训练营的关系：`test_gpio_output` 会先写 `DIR=1`，再写 `OUT=1`，最后读 `IN & 1` 期望为 `1`。这要求 `GPIO_IN` 不是独立死变量。
+
+✅ 你现在就做：先保证 reset 和 `OUT -> IN` 回读过，再碰 interrupt。
+
+⚠️ 容易踩坑：把 `GPIO_IN` 当普通 RW 寄存器。测试没有写 `GPIO_IN`，它必须由设备内部状态计算出来。
+
+### 6.2 `test-gpio-int`
+
+测试覆盖：
+
+- `g233/gpio-int/edge_rising`
+- `g233/gpio-int/level_high`
+- `g233/gpio-int/is_clear`
+- `g233/gpio-int/ie_mask`
+- `g233/gpio-int/plic`
+
+核心要求：
+
+| 场景 | 期望 |
+| --- | --- |
+| edge + rising | `OUT` 从 0 到 1 后，`IS` bit 置位 |
+| level + high | pin 高时 `IS` 置位，pin 低后清除 |
+| W1C | 写 `GPIO_IS=1` 清状态 |
+| IE mask | `IE=0` 时不设置或不输出 interrupt |
+| PLIC | GPIO IRQ 2 出现在 PLIC pending |
+
+🧠 我的理解：GPIO interrupt 至少有四层，不要压成一个 bool。
 
 ```text
-输出或输入变化
-  -> 根据 TRIG/POL 判断是否产生事件
-  -> 根据 IE 判断是否允许设置 IS
+pin_value：当前引脚电平
+prev_pin_value：上一拍引脚电平，用来判断 edge
+IS：设备内部中断状态
+IE：中断使能
+IRQ line：IS & IE 后输出给 PLIC
+```
+
+推荐流程：
+
+```c
+static void gpio_update_pin_state(G233GPIOState *s)
+{
+    uint32_t old = s->prev_in;
+    uint32_t now = gpio_compute_input(s);
+    uint32_t changed = old ^ now;
+    uint32_t active = 0;
+
+    uint32_t edge_mode = ~s->trig;
+    uint32_t level_mode = s->trig;
+
+    uint32_t rising = changed & now & s->pol;
+    uint32_t falling = changed & ~now & ~s->pol;
+    active |= edge_mode & (rising | falling);
+
+    uint32_t high = now & s->pol;
+    uint32_t low = ~now & ~s->pol;
+    active |= level_mode & (high | low);
+
+    s->is |= active & s->ie;
+
+    if (level_mode) {
+        s->is = (s->is & ~level_mode) | (active & level_mode & s->ie);
+    }
+
+    s->prev_in = now;
+    gpio_update_irq(s);
+}
+```
+
+这段是思路模板，不是要求逐字照抄。重点是分清 edge 和 level。
+
+PLIC 链路：
+
+```text
+qtest_writel(GPIO_OUT, 0x1)
+  -> gpio_write offset 0x04
+  -> gpio_update_pin_state()
+  -> s->is |= 0x1
   -> gpio_update_irq()
-  -> PLIC pending 变化
+  -> qemu_set_irq(s->irq, 1)
+  -> PLIC IRQ 2 pending
+  -> qtest_readl(PLIC_PENDING) 看到 bit
 ```
 
-⚠️ 容易踩坑：edge 和 level 不能用同一种清除策略。edge 状态通常 sticky，靠 W1C 清；level 状态要跟电平条件联动。
+🔗 和 SoC 训练营的关系：`test_gpio_plic` 还会 claim/complete PLIC。设备侧只负责 IRQ 线，PLIC 的 claim/complete 由 PLIC 模型负责。
 
-### `test-pwm-basic`
+✅ 你现在就做：先让 `edge_rising`、`is_clear` 过，再处理 `level_high`，最后接 PLIC。
 
-🎥 视频/作者：视频里提到后面会进入 clock/timer，本章先把外设骨架讲清楚。PWM 是你第一次真正把外设骨架和虚拟时间揉在一起。
+⚠️ 容易踩坑：IE mask 的语义要按测试实现。当前测试要求 IE 关闭时不设置 `IS`。不要按另一种硬件规格写成“IS 总是置位，只是不输出 IRQ”，否则会和测试冲突。
 
-📘 讲义：PL011 的 state 里有 clock，迁移状态也可以包含 clock。PWM 的核心就是 channel 状态和 timer。
+### 6.3 `test-pwm-basic`
 
-🧠 我的理解：PWM 不只是 `PERIOD` 和 `DUTY` 两个整数。它还要有 channel enable、counter、done flag、global mirror bit。`PWM_GLB` 里的 `CHn_EN` 是 mirror，`CHn_DONE` 是 W1C，这两个语义不一样。
+测试覆盖：
 
-🔗 和 SoC 训练营的关系：`test-pwm-basic` 检查配置保存、enable 后 GLB mirror、虚拟时间推进后 CNT 增长、周期完成后 DONE 置位、DONE W1C、多通道独立、极性位保存。
+- `g233/pwm/config`
+- `g233/pwm/enable`
+- `g233/pwm/counter`
+- `g233/pwm/done_flag`
+- `g233/pwm/done_clear`
+- `g233/pwm/multi_channel`
+- `g233/pwm/polarity`
 
-✅ 你现在就做：state 里把 4 个 channel 做成数组，而不是写 4 份字段。
+寄存器：
 
-```text
-channels[4].ctrl
-channels[4].period
-channels[4].duty
-channels[4].cnt
-channels[4].timer
+| offset | name | 语义 |
+| --- | --- | --- |
+| `0x00` | `PWM_GLB` | `CHn_EN` mirror，`CHn_DONE` W1C |
+| `0x10+n*0x10+0x00` | `CHn_CTRL` | `EN`、`POL` |
+| `0x10+n*0x10+0x04` | `CHn_PERIOD` | 周期 |
+| `0x10+n*0x10+0x08` | `CHn_DUTY` | 占空 |
+| `0x10+n*0x10+0x0C` | `CHn_CNT` | counter，只读 |
+
+🧠 我的理解：PWM 是“多 channel state + timer”的练习。不要写 4 份重复字段，应该数组化。
+
+```c
+typedef struct G233PWMChannel {
+    uint32_t ctrl;
+    uint32_t period;
+    uint32_t duty;
+    uint32_t cnt;
+    bool done;
+    QEMUTimer timer;
+} G233PWMChannel;
+
+typedef struct G233PWMState {
+    SysBusDevice parent_obj;
+    MemoryRegion iomem;
+    G233PWMChannel ch[4];
+} G233PWMState;
 ```
 
-⚠️ 容易踩坑：`qtest_clock_step` 后 CNT 还是 0。这个不是 qtest 问题，是 timer 没注册、没 rearm，或者 enable 后没有启动计数。
+`PWM_GLB` read 应该计算：
 
-### `test-wdt-timeout`
+```c
+static uint32_t pwm_read_glb(G233PWMState *s)
+{
+    uint32_t v = 0;
+    for (int i = 0; i < 4; i++) {
+        if (s->ch[i].ctrl & PWM_CTRL_EN) {
+            v |= 1u << i;
+        }
+        if (s->ch[i].done) {
+            v |= 1u << (4 + i);
+        }
+    }
+    return v;
+}
+```
 
-🎥 视频/作者：视频强调 class_init 里绑定 reset 和迁移，state 里要区分哪些状态需要保存。WDT 很适合练 reset、timer、lock、W1C。
+`PWM_GLB` write 只清 DONE：
 
-📘 讲义：PL011 的 vmstate 明确保存寄存器和 FIFO 状态。WDT 未来如果支持迁移，也要考虑 `LOAD/CTRL/SR/locked` 以及 timer 剩余时间。
+```c
+for (int i = 0; i < 4; i++) {
+    if (value & (1u << (4 + i))) {
+        s->ch[i].done = false;
+    }
+}
+```
 
-🧠 我的理解：WDT 是“寄存器协议 + 时间副作用”的组合。写 `LOAD` 是配置，写 `CTRL.EN` 是启动，写 `KEY.FEED` 是 reload，写 `KEY.LOCK` 是改变后续写权限，timeout 后设置 `SR.TIMEOUT` 并可能触发 IRQ。
+🔗 和 SoC 训练营的关系：`test_pwm_counter` 和 `test_pwm_done_flag` 都会 `qtest_clock_step`。如果没有 timer，counter 不会变，DONE 也不会置位。
 
-🔗 和 SoC 训练营的关系：`test-wdt-timeout` 检查配置、倒计时、feed 重新装载、timeout flag、W1C 清 flag、lock 后禁用被忽略、INTEN 触发 PLIC IRQ 4。
+✅ 你现在就做：先实现 config、enable、multi_channel，再加 timer 支持 counter/done。
 
-✅ 你现在就做：给 WDT 写状态机。
+⚠️ 容易踩坑：把 `PWM_GLB.CH_EN` 当可写独立 bit。测试期望它反映 `CHn_CTRL.EN`，它是 mirror，不是独立配置。
+
+### 6.4 `test-wdt-timeout`
+
+测试覆盖：
+
+- `g233/wdt/config`
+- `g233/wdt/countdown`
+- `g233/wdt/feed`
+- `g233/wdt/timeout_flag`
+- `g233/wdt/timeout_clear`
+- `g233/wdt/lock`
+- `g233/wdt/interrupt`
+
+寄存器：
+
+| offset | name | 语义 |
+| --- | --- | --- |
+| `0x00` | `WDT_CTRL` | `EN`、`INTEN` |
+| `0x04` | `WDT_LOAD` | reload value |
+| `0x08` | `WDT_VAL` | 当前 counter，只读 |
+| `0x0C` | `WDT_KEY` | magic write：feed / lock |
+| `0x10` | `WDT_SR` | `TIMEOUT`，W1C |
+
+🧠 我的理解：WDT 是“小状态机 + timer + magic key”。
 
 ```text
 disabled
   -> write LOAD
   -> write CTRL.EN
 running
-  -> clock step: VAL 下降
-  -> KEY.FEED: VAL 回到 LOAD
-  -> timeout: SR.TIMEOUT = 1
+  -> timer 推进，VAL 下降
+  -> KEY_FEED，VAL 重装
+  -> timeout，SR.TIMEOUT 置位
 locked
-  -> 某些控制写入被忽略
+  -> 后续 CTRL 写入被限制
 ```
 
-⚠️ 容易踩坑：锁定不是一个寄存器值那么简单，而是“后续写行为”的条件。也就是说 lock 会改变 write 回调如何处理 `WDT_CTRL`。
+关键行为：
 
-### `test-spi-jedec / test-spi-cs / test-spi-overrun`
+```c
+case WDT_KEY:
+    if (value == WDT_KEY_FEED) {
+        wdt_reload(s);
+    } else if (value == WDT_KEY_LOCK) {
+        s->locked = true;
+    }
+    break;
+```
 
-🎥 视频/作者：视频讲 PL011 的 FIFO 和中断时提醒，FIFO 不是优化，而是设备正确性的一部分。SPI 也一样，RXNE/TXE/OVERRUN 这些状态位就是协议本身。
+timeout callback：
 
-📘 讲义：PL011 的 read/write 会驱动 FIFO 和中断状态。SPI 的 `DR` 读写也要驱动状态位、下游 flash、片选和错误状态。
+```c
+static void wdt_timeout(void *opaque)
+{
+    G233WDTState *s = opaque;
 
-🧠 我的理解：SPI controller 不是 flash 本体。SPI controller 是 master，`CR2` 选 CS，`DR` 写入一个 byte，controller 把它送给当前 flash，再把返回 byte 放进 RX buffer，并更新 `SR.RXNE/TXE/OVERRUN`。
+    s->sr |= WDT_SR_TIMEOUT;
+    if (s->ctrl & WDT_CTRL_INTEN) {
+        qemu_set_irq(s->irq, 1);
+    }
+}
+```
 
-🔗 和 SoC 训练营的关系：`test-spi-jedec` 检查 init、CS0 上 W25X16 的 JEDEC ID、TXE/RXNE 行为；`test-spi-cs` 检查 CS0/CS1 两片 flash 的 ID、容量、擦写读独立性；`test-spi-overrun` 检查 RXNE 未读时第二个字节导致 OVERRUN，并在 ERRIE 打开时触发 PLIC IRQ 5。
+🔗 和 SoC 训练营的关系：`test_wdt_lock` 会写 lock key 后尝试 `WDT_CTRL=0`，期望 `EN` 仍然保持。这说明 lock 改变的是后续 write 行为。
 
-✅ 你现在就做：画 SPI 一次 byte transfer。
+✅ 你现在就做：实现顺序建议：config -> countdown -> feed -> timeout -> W1C -> lock -> interrupt。
+
+⚠️ 容易踩坑：`WDT_VAL` 不能只是 load 的副本。`qtest_clock_step` 后它必须下降；feed 后它必须变大。
+
+### 6.5 `test-spi-jedec`
+
+测试覆盖：
+
+- `g233/spi/init`
+- `g233/spi/jedec_id`
+- `g233/spi/transfer_byte`
+
+寄存器：
+
+| offset | name | 语义 |
+| --- | --- | --- |
+| `0x00` | `SPI_CR1` | `SPE`、`MSTR`、interrupt enable |
+| `0x04` | `SPI_CR2` | CS select |
+| `0x08` | `SPI_SR` | `RXNE`、`TXE`、`OVERRUN` |
+| `0x0C` | `SPI_DR` | data register，写触发传输，读取接收数据 |
+
+测试中的 transfer：
 
 ```text
-guest write SPI_DR
-  -> 检查 SPE/MSTR
-  -> 如果 RXNE 还没清，置 OVERRUN
-  -> 根据 CR2 选 flash
-  -> flash 接收 tx byte，返回 rx byte
-  -> rx 放入 DR/RX buffer
-  -> 置 RXNE，置 TXE
-  -> spi_update_irq()
+wait TXE
+write SPI_DR = tx
+wait RXNE
+read SPI_DR -> rx
 ```
 
-⚠️ 容易踩坑：把 CS 当成普通数值保存就结束了。`test-spi-cs` 会验证两片 flash 的状态隔离，CS 必须真的决定当前访问的是哪个下游设备。
+🧠 我的理解：`SPI_DR` 是 SPI controller 的动作入口。写它表示“发出一个 byte”；读它表示“取走收到的 byte”。
+
+最小 transfer 模型：
+
+```c
+static void spi_transfer_byte(G233SPIState *s, uint8_t tx)
+{
+    uint8_t rx;
+
+    if (!(s->cr1 & SPI_CR1_SPE) || !(s->cr1 & SPI_CR1_MSTR)) {
+        return;
+    }
+
+    if (s->sr & SPI_SR_RXNE) {
+        s->sr |= SPI_SR_OVERRUN;
+    }
+
+    rx = g233_spi_flash_xfer(s, s->cr2 & 0x3, tx);
+    s->rx = rx;
+    s->sr |= SPI_SR_RXNE | SPI_SR_TXE;
+    spi_update_irq(s);
+}
+```
+
+🔗 和 SoC 训练营的关系：JEDEC ID 命令是 `0x9F`，CS0 上 W25X16 期望返回 `{0xEF, 0x30, 0x15}`。
+
+✅ 你现在就做：先只支持 CS0 和 JEDEC ID，把 `test-spi-jedec` 跑通，再扩 CS。
+
+⚠️ 容易踩坑：写 `SPI_DR` 后只保存 `tx`，没有生成 `rx` 和设置 `RXNE`。这样 `spi_wait_rxne` 会超时。
+
+### 6.6 `test-spi-cs`
+
+测试覆盖：
+
+- `g233/spi-cs/identification`
+- `g233/spi-cs/individual`
+- `g233/spi-cs/cross`
+- `g233/spi-cs/alternating`
+- `g233/spi-cs/capacity`
+- `g233/spi-cs/concurrent_status`
+
+核心要求：
+
+| CS | Flash | JEDEC | 容量 |
+| --- | --- | --- | --- |
+| CS0 | W25X16 | `0xEF3015` | 2 MiB |
+| CS1 | W25X32 | `0xEF3016` | 4 MiB |
+
+🧠 我的理解：这题验证 SPI controller 是否真正把 CS 路由到不同 flash，而不是所有数据都进一个全局状态。
+
+flash 子状态应该独立：
+
+```c
+typedef struct G233SPIFlash {
+    uint8_t jedec[3];
+    uint8_t *storage;
+    uint32_t size;
+    uint8_t status;
+    bool write_enable;
+    /* command parser state */
+} G233SPIFlash;
+
+typedef struct G233SPIState {
+    SysBusDevice parent_obj;
+    MemoryRegion iomem;
+    uint32_t cr1;
+    uint32_t cr2;
+    uint32_t sr;
+    uint8_t rx;
+    G233SPIFlash flash[2];
+    qemu_irq irq;
+} G233SPIState;
+```
+
+CS 路由：
+
+```c
+static G233SPIFlash *spi_selected_flash(G233SPIState *s)
+{
+    return &s->flash[s->cr2 & 0x1];
+}
+```
+
+🔗 和 SoC 训练营的关系：`cross` 和 `alternating` 会在两片 flash 之间切换访问。如果 CS 切换不重置或不隔离 flash command parser，很容易串状态。
+
+✅ 你现在就做：给每片 flash 独立维护 command parser、地址、busy/status、storage。
+
+⚠️ 容易踩坑：CS 变化时没有结束上一片 flash 的 command transaction。测试里会通过切换 CS 模拟片选释放，flash 状态机应能回到合理边界。
+
+### 6.7 `test-spi-overrun`
+
+测试覆盖：
+
+- `g233/spi-overrun/interrupt`
+- `g233/spi-overrun/polling`
+
+核心语义：
+
+```text
+如果 RXNE=1，说明上一个接收字节还没被软件读走。
+这时新 byte 又完成接收，应该设置 OVERRUN。
+如果 ERRIE 打开，还应该触发 SPI IRQ 5。
+```
+
+流程：
+
+```text
+write SPI_DR = 0xAA
+  -> RXNE = 1
+不读 SPI_DR
+write SPI_DR = 0xBB
+  -> 发现 RXNE 仍为 1
+  -> SR.OVERRUN = 1
+  -> 如果 CR1.ERRIE，qemu_set_irq(irq, 1)
+```
+
+W1C 清除：
+
+```c
+case SPI_SR:
+    s->sr &= ~(value & SPI_SR_OVERRUN);
+    spi_update_irq(s);
+    break;
+```
+
+🔗 和 SoC 训练营的关系：`test_interrupt_overrun_detection` 会打开 `SPI_CR1_ERRIE` 并检查 PLIC IRQ 5；`test_polling_overrun_detection` 不开 interrupt，只轮询 `SPI_SR.OVERRUN`，再 W1C 清除。
+
+✅ 你现在就做：先用一个 byte 的 RX buffer 建模。只有当 `read SPI_DR` 时清 `RXNE`，这样 overrun 条件才自然出现。
+
+⚠️ 容易踩坑：每次写 `SPI_DR` 都覆盖 `rx`，但不检查旧 `RXNE`。这样永远不会产生 overrun。
 
 ---
 
 ## 7. 最小练习
 
-✅ 你现在就做：练习一，跟一遍 PL011。
+### 练习 1：手工追 PL011 外设建模链路
+
+✅ 你现在就做：按这个顺序在源码里找。
 
 ```text
-打开 [hw/char/pl011.c](../hw/char/pl011.c) 和 [include/hw/char/pl011.h](../include/hw/char/pl011.h)
-找到 TypeInfo
-找到 PL011State
-找到 memory_region_init_io
-找到 pl011_read / pl011_write
-找到 pl011_update
-找到 machine 里创建和连接 PL011 的位置
+TYPE_PL011
+  -> TypeInfo
+  -> PL011State
+  -> pl011_init
+  -> memory_region_init_io
+  -> pl011_ops
+  -> pl011_read / pl011_write
+  -> pl011_update
+  -> machine 中 qdev_new / sysbus_realize / map / connect irq
 ```
 
-✅ 你现在就做：练习二，给 G233 GPIO 写一张“实现前表格”。
+参考思路：
 
-| offset | name | read 语义 | write 语义 | 副作用 |
+| 找到的东西 | 说明 |
+| --- | --- |
+| `TypeInfo` | 设备类型如何注册 |
+| `PL011State` | 设备状态有哪些 |
+| `pl011_init` | MMIO/IRQ/clock 骨架如何建立 |
+| `pl011_ops` | guest 访问如何进入回调 |
+| `pl011_update` | 中断状态如何投影到 IRQ 线 |
+| machine 集成 | 设备如何出现在地址空间 |
+
+### 练习 2：给 GPIO 写寄存器语义表
+
+✅ 你现在就做：不要写代码，先填表。
+
+| 寄存器 | reset | read | write | 副作用 |
 | --- | --- | --- | --- | --- |
-| `0x00` | `GPIO_DIR` | 返回方向 | 保存可写 bit | 可能影响 IN 派生 |
-| `0x04` | `GPIO_OUT` | 返回输出值 | 更新输出 | 可能触发 edge/level |
-| `0x08` | `GPIO_IN` | 返回输入视图 | 忽略 | 无 |
-| `0x0C` | `GPIO_IE` | 返回使能 | 更新使能 | 更新 IRQ |
-| `0x10` | `GPIO_IS` | 返回状态 | W1C | 更新 IRQ |
-| `0x14` | `GPIO_TRIG` | 返回触发类型 | 更新 | 影响后续事件判断 |
-| `0x18` | `GPIO_POL` | 返回极性 | 更新 | 影响后续事件判断 |
+| `DIR` | `0` | 返回方向 | 保存 32-bit | 影响 `IN` 派生 |
+| `OUT` | `0` | 返回输出 | 保存 32-bit | 可能触发中断 |
+| `IN` | `0` | 计算输入视图 | 忽略 | 无 |
+| `IE` | `0` | 返回使能 | 保存 32-bit | 更新 IRQ |
+| `IS` | `0` | 返回状态 | W1C | 更新 IRQ |
+| `TRIG` | `0` | 返回模式 | 保存 32-bit | 影响后续触发判断 |
+| `POL` | `0` | 返回极性 | 保存 32-bit | 影响后续触发判断 |
 
-✅ 你现在就做：练习三，手动追踪一个 qtest。
+### 练习 3：从 qtest 追一次 `test-gpio-int`
 
-```text
-qtest_writel(qts, GPIO_OUT, 0x1)
-  -> gpio_write(offset=0x04, value=0x1)
-  -> s->out = 0x1
-  -> 更新 GPIO_IN 派生视图
-  -> 根据旧值和新值判断 edge
-  -> 可能设置 GPIO_IS
-  -> gpio_update_irq()
-```
-
-✅ 你现在就做：练习四，写一个“寄存器语义清单”，每次实现新外设前都过一遍。
+✅ 你现在就做：把下面链路默写出来。
 
 ```text
-默认值是什么
-哪些 bit 只读
-哪些 bit 可写
-哪些 bit 是 W1C
-哪些 read 有副作用
-哪些 write 有副作用
-哪些字段需要 timer
-哪些状态需要 IRQ update
-哪些状态未来可能需要迁移
+qtest_writel(GPIO_DIR, 1)
+qtest_writel(GPIO_TRIG, 0)
+qtest_writel(GPIO_POL, 1)
+qtest_writel(GPIO_IE, 1)
+qtest_writel(GPIO_OUT, 0)
+qtest_writel(GPIO_OUT, 1)
+  -> output 发生 0->1
+  -> rising edge 条件成立
+  -> IS bit0 置位
+  -> IE bit0 允许
+  -> GPIO IRQ line 拉高
+  -> PLIC IRQ 2 pending
 ```
 
-🧠 我的理解：这 4 个练习做完，你再写 SoC 外设题会稳很多。你不是靠感觉写 switch，而是先把硬件协议翻译成 state + callback + side effect。
+### 练习 4：从 qtest 追一次 `test-spi-overrun`
 
-⚠️ 容易踩坑：不要一上来就追求“像真实硬件一样完整”。训练营测试通常先要求一个可验证的最小模型。先让 qtest 证明你的寄存器语义正确，再逐步补复杂行为。
+✅ 你现在就做：检查自己能否说清每个状态位。
+
+```text
+初始：TXE=1，RXNE=0，OVERRUN=0
+write DR 0xAA
+  -> RXNE=1
+不 read DR
+write DR 0xBB
+  -> 发现 RXNE 仍为 1
+  -> OVERRUN=1
+  -> ERRIE=1 时 IRQ 5 pending
+write SR OVERRUN
+  -> W1C 清 OVERRUN
+```
+
+### 练习 5：实现前检查清单
+
+每做一个新外设，先填这 10 项。
+
+```text
+1. TYPE 名字是什么？
+2. parent 是否是 TYPE_SYS_BUS_DEVICE？
+3. State 里有哪些寄存器影子？
+4. 哪些寄存器是派生值？
+5. reset 默认值是什么？
+6. MemoryRegion 大小是多少？
+7. read/write 支持哪些 offset？
+8. 哪些寄存器有 W1C / RO / mirror / trigger？
+9. 有没有 IRQ/timer/bus side effect？
+10. machine 里 base 和 IRQ 号是多少？
+```
+
+⚠️ 容易踩坑：直接开写通常会快 10 分钟，然后 debug 慢 3 小时。先做表，尤其是 W1C、timer、IRQ 这三类。
 
 ---
 
 ## 8. 下一章怎么接
 
-🎥 视频/作者：视频最后把设备集成到 machine 作为收束点：创建设备、设置属性、realize、映射 MMIO、连接 IRQ、写设备树。设备模型写完，还必须让 guest 能发现它。
+本章解决的是“单个外设内部怎么建模”。后面还要接三块知识。
 
-📘 讲义：讲义在 machine 集成部分用 ARM virt 的 PL011 举例：`qdev_new` 创建设备，`sysbus_realize_and_unref` 激活设备，`memory_region_add_subregion` 映射 MMIO，`sysbus_connect_irq` 接到中断控制器，并通过设备树暴露给 guest。
-
-🧠 我的理解：本章解决“一个外设内部怎么写”。下一章“主板建模流程”会解决“这些外设怎么组成一块 SoC 板子”。再下一章“时钟系统”会补上 PWM/WDT/SPI 这种依赖虚拟时间和 clock 的部分。
-
-🔗 和 SoC 训练营的关系：建议你后续顺序这样学。
-
-| 顺序 | 章节 | 为什么 |
+| 下一步 | 解决什么问题 | 和本章关系 |
 | --- | --- | --- |
-| 1 | 外设建模流程 | 先会写一个 MMIO 设备 |
-| 2 | 主板建模流程 | 把 GPIO/PWM/WDT/SPI 挂到 G233 machine |
-| 3 | 时钟系统 | 理解 PWM/WDT 计时、clock、timer |
-| 4 | kernel 运行机制 | 理解 guest driver 怎么通过 MMIO/IRQ 使用这些设备 |
+| 主板建模流程 | 怎么把 CPU、RAM、PLIC、外设组成一块 board | 本章设备必须由 machine 创建和连线 |
+| 时钟系统 | QEMUClock/QEMUTimer/Clock 怎么工作 | PWM/WDT/SPI busy 需要时间推进 |
+| kernel 运行机制 | guest driver 如何发现和访问设备 | 设备树、MMIO、IRQ 最终给 Linux driver 用 |
 
-✅ 你现在就做：学下一章前，先确认自己能解释这句话。
+🎥 视频/作者：视频最后强调，写完设备内部逻辑还不够，必须把设备集成到 machine：创建、设置属性、realize、映射 MMIO、连接 IRQ、写设备树。
+
+📘 讲义：PL011 在 ARM virt 机型里会被创建、映射地址、连接中断，并写入设备树，包括 `compatible`、`reg`、`interrupts`、`clock-names`、`stdout-path`。
+
+🧠 我的理解：设备模型和主板模型是两半。设备模型回答“这个外设如何响应访问”；主板模型回答“这个外设在哪里、接到谁、guest 如何发现它”。
+
+🔗 和 SoC 训练营的关系：如果某个 qtest 读写地址完全没进入设备回调，优先查 machine 映射；如果进入回调但返回错，查设备寄存器语义；如果寄存器对但 PLIC 不 pending，查 IRQ 连接和 `qemu_set_irq`。
+
+✅ 你现在就做：下一章学习主板建模时，只盯这 4 个动作：
 
 ```text
-qtest 不是在直接调用我的设备函数，
-而是在模拟 guest 访问物理地址；
-QEMU 地址空间把这个访问路由到 MemoryRegionOps；
-我的 read/write 回调再把访问翻译成设备状态变化。
+qdev_new
+sysbus_realize_and_unref
+memory_region_add_subregion
+sysbus_connect_irq
 ```
 
-⚠️ 容易踩坑：如果后面某个 qtest 读不到设备，不要只查 read/write。也要查 machine 是否创建设备、MMIO base 是否一致、IRQ 号是否接对、设备是否 realize。
+⚠️ 容易踩坑：不要把所有失败都归因于设备 read/write。SoC 题里至少一半问题是“设备没被正确放进 board”。
 
 ---
 
-## 我的点评和延伸
+## 附录 A：术语表
 
-🧠 我的理解：这章最值钱的地方，是它把“外设建模”从一堆 QEMU API 还原成工程动作。你以后看到任何 SoC 外设，都可以先问 7 个问题。
+| 术语 | 解释 |
+| --- | --- |
+| QOM | QEMU Object Model，QEMU 的对象系统，用 C 实现类似类/对象/继承的机制 |
+| `TypeInfo` | 描述一个 QOM 类型如何注册、继承、初始化 |
+| `DeviceState` | QEMU 设备基类，负责设备生命周期、属性、reset、realize 等 |
+| `SysBusDevice` | 系统总线设备，适合 SoC 内部 MMIO 外设 |
+| state struct | 设备实例的内部状态，通常第一个字段是父类对象 |
+| `instance_init` | 对象实例创建时调用，适合搭 MMIO/IRQ/clock 骨架 |
+| `class_init` | 类型初始化时调用，适合绑定 realize/reset/vmstate/properties |
+| `realize` | 设备正式激活阶段，适合检查属性、绑定后端资源 |
+| `reset` | 设备回到硬件复位状态 |
+| `MemoryRegion` | QEMU 地址空间中的一段区域，可以是 RAM、ROM、MMIO |
+| `MemoryRegionOps` | MMIO 读写函数表 |
+| `opaque` | read/write 回调里的用户指针，通常指向设备 state |
+| `offset` | guest 访问地址相对于设备 MMIO base 的偏移 |
+| `qemu_irq` | QEMU 表示中断线的对象 |
+| `qemu_set_irq` | 拉高或拉低 IRQ 线 |
+| PLIC | RISC-V Platform-Level Interrupt Controller，平台级中断控制器 |
+| `QEMUTimer` | QEMU 定时器，用虚拟时间或宿主时间驱动未来事件 |
+| W1C | write-one-to-clear，写 1 清除对应状态位 |
+| mirror bit | 镜像其他状态的 bit，通常 read 时计算 |
+| write trigger | 写寄存器触发动作，而不是简单保存值 |
+| qtest | QEMU 的测试框架，可通过协议读写 guest 地址和推进虚拟时间 |
+
+---
+
+## 附录 B：本章检查题
+
+### 基础检查
+
+1. `DeviceState` 和 `SysBusDevice` 的区别是什么？
+2. 为什么 SoC 内部 GPIO 通常建模成 `SysBusDevice`，而不是 PCI 设备？
+3. `memory_region_init_io` 和 `memory_region_add_subregion` 分别解决什么问题？
+4. write 回调里的 `offset` 为什么不是绝对物理地址？
+5. 为什么设备 state 不应该机械照抄寄存器表？
+
+### 寄存器语义检查
+
+1. W1C 应该怎么写？为什么不能 `reg = value`？
+2. `GPIO_IN` 为什么可能是派生值？
+3. `PWM_GLB.CH_EN` 为什么是 mirror bit？
+4. `WDT_KEY` 为什么是 write trigger？
+5. `SPI_DR` 的 read 和 write 分别有什么副作用？
+
+### IRQ/timer/bus 检查
+
+1. 中断原因、中断使能、IRQ 线三者是什么关系？
+2. GPIO edge interrupt 为什么需要保存上一拍 pin 值？
+3. `qtest_clock_step` 为什么能验证 PWM/WDT？
+4. WDT timeout 后应该更新哪些状态？
+5. SPI controller 和 SPI flash 的状态为什么要分开？
+
+### SoC 测试检查
+
+1. `test-gpio-basic` 真正在验证什么？
+2. `test-gpio-int` 中，从 `GPIO_OUT 0->1` 到 PLIC pending 的完整链路是什么？
+3. `test-pwm-basic` 为什么要求 `PWM_GLB` 既有 mirror bit 又有 W1C bit？
+4. `test-wdt-timeout` 中 lock key 改变了哪个行为？
+5. `test-spi-jedec` 为什么写 `SPI_DR` 后必须设置 `RXNE`？
+6. `test-spi-cs` 为什么能抓出 CS0/CS1 状态没有隔离的问题？
+7. `test-spi-overrun` 为什么必须在读 `SPI_DR` 时清 `RXNE`？
+
+### 参考答案方向
+
+如果答不上来，按下面回看：
+
+| 问题类型 | 回看章节 |
+| --- | --- |
+| QOM / 类型 / 生命周期 | 第 1 节 |
+| state 设计 / reset | 第 2 节 |
+| MMIO / offset / qtest 链路 | 第 3 节 |
+| W1C / mirror / trigger | 第 4 节 |
+| IRQ / timer / bus side effect | 第 5 节 |
+| G233 qtest 具体映射 | 第 6 节 |
+
+---
+
+## 最后总评
+
+这章的核心不是 PL011，也不是某个 API 名字，而是这条工程路线：
 
 ```text
-它是什么类型的设备？
-它有哪些寄存器？
-哪些寄存器是真状态，哪些是派生视图？
-guest 写寄存器会触发什么副作用？
-有没有 IRQ，IRQ 原因和使能怎么组合？
-有没有 timer / clock / FIFO / 下游 bus？
-它在 machine 里怎么被创建、映射、连接？
+寄存器规格
+  -> state 设计
+  -> MemoryRegionOps
+  -> read/write 语义
+  -> IRQ/timer/bus 副作用
+  -> machine 映射和连线
+  -> qtest 验证
 ```
 
-🧩 补充知识：如果你想把这章变成代码能力，最重要的不是背 `memory_region_init_io`，而是形成“寄存器规格 -> state 字段 -> read/write 语义 -> update_irq/update_timer -> qtest 验证”的肌肉记忆。
-
-🔗 和 SoC 训练营的关系：G233 的 SoC 模块其实就是把这章拆成多轮考试。GPIO 考 MMIO 和 IRQ，PWM 考多 channel 和 timer，WDT 考 timeout 和 magic key，SPI 考总线协议、片选、下游 flash 和 overrun。
-
-✅ 你现在就做：下一步学习“主板建模流程”时，重点看 machine 如何把这些设备接起来。等你能同时说清“设备内部逻辑”和“machine 外部连线”，SoC 模块就不再是一团雾了。
+你只要能用这条路线解释 GPIO/PWM/WDT/SPI 的每个测试，就已经不是在“看 QEMU 源码”，而是在按 QEMU 的模型写硬件。
