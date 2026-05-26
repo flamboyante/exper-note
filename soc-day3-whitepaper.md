@@ -10,7 +10,7 @@
 | `/home/flamboy/qemu-camp/qemu-camp-2026-exper-flamboyante/tests/gevico/qtest/test-wdt-timeout.c` | WDT 行为规格，以这里的 offset 和断言为准 |
 | [G233 SoC 硬件手册](https://github.com/gevico/qemu-camp-tutorial/blob/main/docs/exercise/2026/stage1/soc/g233-datasheet.md) | PWM/WDT 的硬件背景、驱动编程模型、PLIC IRQ 编号 |
 | [G233 SoC 实验手册](https://github.com/gevico/qemu-camp-tutorial/blob/main/docs/exercise/2026/stage1/soc/g233-exper-manual.md) | SoC 方向测题顺序和验收方式 |
-| [qemu-clock-study.md](./qemu-clock-study.md) | `QEMUTimer`、`QEMU_CLOCK_VIRTUAL`、`qtest_clock_step` 的知识补充 |
+| [qemu-clock-study.md](./qemu-clock-study.md) | `QEMUTimer`、`ptimer`、`QEMU_CLOCK_VIRTUAL`、`qtest_clock_step` 的知识补充 |
 | [qemu-hw-study.md](./qemu-hw-study.md) | `SysBusDevice`、`MemoryRegionOps`、设备 state 的建模方法 |
 | [qemu-board-study.md](./qemu-board-study.md) | board map、PLIC IRQ 接线、`sysbus_*` 接入方法 |
 
@@ -34,16 +34,16 @@ PWM / WDT:
 
 ## 一句话结论
 
-Day3 的本质是把 Day2 的 `MMIO + state + side effect` 扩展成 `MMIO + state + QEMUTimer + side effect`。
+Day3 的本质是把 Day2 的 `MMIO + state + side effect` 扩展成 `MMIO + state + virtual time + side effect`。
 
 ```text
 PWM:
-  enable 后让 CNT 随虚拟时间变大
+  用 QEMUTimer + elapsed time 让 CNT 随虚拟时间变大
   到一个周期后置 DONE
   DONE 用 W1C 清除
 
 WDT:
-  enable 后让 VAL 随虚拟时间变小
+  用 ptimer 让 VAL 随虚拟时间变小
   feed 后重装 VAL
   超时后置 TIMEOUT
   INTEN 打开时拉 PLIC IRQ 4
@@ -64,16 +64,17 @@ QEMU MemoryRegionOps.write()
 G233PWMState / G233WDTState
   |
   | 保存 ctrl / period / duty / load 等配置
-  | 安排 QEMUTimer 到未来某个虚拟时间点
+  | PWM: 记录 start/last_update，并安排 QEMUTimer 到周期完成点
+  | WDT: 配置 ptimer limit/count/frequency，然后 run
   v
-QEMUTimer on QEMU_CLOCK_VIRTUAL
+QEMUTimer / ptimer on virtual time
   |
   | qtest_clock_step(qts, ns) 推进虚拟时间
   v
 timer callback fires
   |
-  | PWM: 更新 CNT / DONE
-  | WDT: 更新 VAL / TIMEOUT
+  | PWM: 主要置 DONE，CNT 由 elapsed time 推导
+  | WDT: ptimer 到 0 后置 TIMEOUT
   v
 optional qemu_set_irq()
   |
@@ -89,7 +90,7 @@ PLIC pending
 | --- | --- | --- |
 | driver / qtest | 写 MMIO，读状态，推进虚拟时间 | `qtest_clock_step` 不是 sleep，是推进 QEMU 虚拟时钟 |
 | 设备 read/write | 保存配置，启动/停止 timer，处理 W1C | 不要在 write 里假装时间已经过去 |
-| timer callback | 到期后改变状态位 | `DONE`、`TIMEOUT`、IRQ 都应该在这里或由这里触发 |
+| timer / ptimer callback | 到期后改变状态位 | `DONE`、`TIMEOUT`、IRQ 都应该在这里或由这里触发 |
 | board | 把设备映射到 base，IRQ 接到 PLIC | WDT 必须接 IRQ 4，PWM 当前测试先不依赖 IRQ |
 
 ---
@@ -102,7 +103,7 @@ PLIC pending
 | --- | --- | --- |
 | PWM basic | `test-pwm-basic` | period、duty、polarity、enable、CNT、DONE、W1C、4 通道 |
 | WDT timeout | `test-wdt-timeout` | LOAD、VAL、FEED、LOCK、TIMEOUT、W1C、PLIC IRQ 4 |
-| 虚拟时间 | 两个测题都用 | `QEMUTimer` 如何被 `qtest_clock_step` 触发 |
+| 虚拟时间 | 两个测题都用 | PWM 用 `QEMUTimer + elapsed time`，WDT 用 `ptimer` |
 | board 接入 | 两个设备都需要 | base 地址、MemoryRegion、IRQ 接线 |
 
 今天不做：
@@ -120,7 +121,7 @@ PLIC pending
 ```text
 PWM 是“周期性计数 + 周期完成标志”。
 WDT 是“递减倒计时 + 喂狗重装 + 超时报警”。
-QEMU 里这两者都不是靠宿主 sleep，而是靠 QEMUTimer 和 qtest_clock_step。
+QEMU 里这两者都不是靠宿主 sleep，而是靠虚拟时间和 qtest_clock_step。默认选择是：PWM 用 `QEMUTimer + elapsed time`，WDT 用 `ptimer`。
 ```
 
 ---
@@ -431,7 +432,7 @@ timer callback:
 
 ---
 
-## 6. QEMUTimer 怎么承接 qtest_clock_step
+## 6. 虚拟时间怎么承接 qtest_clock_step
 
 ### 6.1 `qtest_clock_step` 不是宿主 sleep
 
@@ -450,7 +451,42 @@ timer callback:
   -> WDT_SR.TIMEOUT = 1
 ```
 
-### 6.2 为什么不能用 sleep
+### 6.2 `QEMUTimer` 和 `ptimer` 怎么选
+
+更正式的说法不是“PWM 必须用哪个、WDT 必须用哪个”，而是看设备寄存器暴露的硬件语义。
+
+| 机制 | 更像什么 | 适合场景 |
+| --- | --- | --- |
+| `QEMUTimer` | 到某个虚拟时间点触发一次 callback | 你自己根据 `qemu_clock_get_ns()` 推导 counter、状态或比较事件 |
+| `ptimer` | QEMU 已封装好的 periodic down-counter | 设备有 `LOAD/VALUE/COUNT`，硬件语义就是按频率递减到 0 |
+
+本项目默认选择：
+
+| 设备 | 默认选择 | 为什么 |
+| --- | --- | --- |
+| PWM | `QEMUTimer + elapsed time` | G233 的 `CNT` 是递增 counter，用 elapsed time 推导最直观 |
+| WDT | `ptimer` | G233 的 `LOAD/VAL` 是典型递减计数器，和 `ptimer` 完全贴合 |
+
+🧠 我的理解：`ptimer` 本质上仍然基于 QEMU timer 体系，但它多封装了一层“递减计数器”。所以 WDT 用它会更正式；PWM 如果硬套 `ptimer`，也能做，但读 `CNT` 时要把“剩余 count”转换成“已经走过的 count”。
+
+PWM 的两种合法写法：
+
+| 写法 | 读 `CNT` | 优点 | 缺点 |
+| --- | --- | --- | --- |
+| `QEMUTimer + elapsed time` | `CNT = elapsed_ns / tick_ns` | 和递增 counter 直觉一致，容易解释 | 需要自己维护 `start_ns/last_update_ns` |
+| `ptimer` | `CNT = PERIOD - ptimer_get_count()` | 更像硬件 counter 组件 | G233 `CNT` 是递增，语义要反向换算 |
+
+WDT 的推荐写法：
+
+```text
+LOAD -> ptimer_set_limit(timer, load, reload=1)
+VAL  -> ptimer_get_count(timer)
+EN   -> ptimer_run(timer, oneshot=1)
+FEED -> ptimer_set_count(timer, ptimer_get_limit(timer))
+timeout callback -> SR.TIMEOUT=1, update_irq()
+```
+
+### 6.3 为什么不能用 sleep
 
 设备模型里不要用宿主 `sleep` 或忙等：
 
@@ -461,7 +497,9 @@ timer callback:
 | write 时立刻置 DONE/TIMEOUT | 没有体现虚拟时间，`qtest_clock_step` 失去意义 |
 | 用真实墙钟时间 | 测试不稳定，机器快慢会影响结果 |
 
-### 6.3 推荐的时间建模套路
+### 6.4 推荐的时间建模套路
+
+PWM 默认用 `QEMUTimer + elapsed time`：
 
 ```c
 static void pwm_channel_rearm(G233PWMState *s, int ch)
@@ -473,18 +511,19 @@ static void pwm_channel_rearm(G233PWMState *s, int ch)
 }
 ```
 
-```c
-static void wdt_rearm(G233WDTState *s)
-{
-    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    int64_t timeout_ns = wdt_load_to_ns(s->load);
+WDT 默认用 `ptimer`：
 
-    s->deadline_ns = now + timeout_ns;
-    timer_mod(s->timer, s->deadline_ns);
+```c
+static void g233_wdt_reload_and_run(G233WDTState *s)
+{
+    ptimer_transaction_begin(s->timer);
+    ptimer_set_limit(s->timer, s->load, 1);
+    ptimer_run(s->timer, 1);
+    ptimer_transaction_commit(s->timer);
 }
 ```
 
-这里的 `period_to_ns/load_to_ns` 不需要一开始追求真实硬件频率。训练营测题只要求：
+这里的 `period_to_ns` 和 `ptimer_set_period/freq` 不需要一开始追求真实硬件频率。训练营测题只要求：
 
 | 测题 | 时间要求 |
 | --- | --- |
@@ -513,6 +552,7 @@ typedef struct G233PWMChannel {
     uint32_t cnt;
     bool done;
     QEMUTimer *timer;
+    int64_t start_ns;
     int64_t last_update_ns;
 } G233PWMChannel;
 
@@ -592,12 +632,13 @@ static void g233_pwm_write_glb(G233PWMState *s, uint32_t value)
 
 ### 7.4 counter / done 的最小模型
 
-为了通过当前测题，可以先建立一个简化模型：
+PWM 默认用 `QEMUTimer + elapsed time`。原因是 G233 暴露出来的 `CHn_CNT` 是递增 counter，读寄存器时直接按虚拟时间差推导最顺。
 
 ```text
 enable channel:
   cnt = 0
   done = false
+  start_ns = now
   last_update_ns = now
   timer_mod(timer, now + period_delay)
 
@@ -613,12 +654,19 @@ timer callback:
     可以继续 rearm 下一周期
 ```
 
-实现时有两个选择：
+如果你想顺手学习 `ptimer`，PWM 也能用，但要做反向换算：
+
+```text
+ptimer count = 距离本周期结束还剩多少 tick
+PWM CNT      = PERIOD - ptimer_get_count()
+```
+
+两种方案对比：
 
 | 方案 | 优点 | 注意 |
 | --- | --- | --- |
-| callback 里推进 `cnt/done` | 简单，适合当前测题 | `test_pwm_counter` step 1ms 后必须已经让 cnt > 0 |
-| read `CNT` 时按时间差计算 | 更接近连续 counter | 仍要用 timer 负责 DONE |
+| `QEMUTimer + elapsed time` | 和 `CNT` 递增语义一致，默认推荐 | 要自己维护 `start_ns/last_update_ns` |
+| `ptimer` | 可以练习正式 down-counter 抽象 | `CNT = PERIOD - count`，语义要转换 |
 
 🧠 我的理解：当前测题对 PWM 的要求是“有时间感”，不是“精确频率”。只要 1ms 后 `CNT > 0`，100ms 后短周期能 `DONE=1`，你的方向就是对的。
 
@@ -644,6 +692,8 @@ PWM 当前测题不要求 IRQ，所以最小接入可以先不连 IRQ 3。但手
 ### 8.1 推荐 state
 
 ```c
+#include "hw/core/ptimer.h"
+
 #define TYPE_G233_WDT "g233-wdt"
 #define G233_WDT_SIZE 0x100
 
@@ -658,13 +708,33 @@ typedef struct G233WDTState {
     uint32_t sr;
     bool locked;
 
-    QEMUTimer *timer;
-    int64_t deadline_ns;
-    int64_t last_update_ns;
+    ptimer_state *timer;
 } G233WDTState;
 ```
 
 `locked` 单独保存，不建议只塞进 `ctrl` 的某个未测 bit。测题只要求 lock 后 `CTRL` 写入无效，但你自己读代码时，单独字段更清楚。
+
+WDT 默认用 `ptimer`。这是 QEMU 里更正式的 down-counter 抽象：它自己维护 limit/count，`ptimer_get_count()` 正好对应 `WDT_VAL`，到 0 后调用 callback。
+
+realize/init 阶段至少要完成两件事：创建 `ptimer`，并设置 tick 频率或周期。教学版可以先用 `1000 Hz`，也就是 1 tick = 1 ms。
+
+```c
+static void g233_wdt_realize(DeviceState *dev, Error **errp)
+{
+    G233WDTState *s = G233_WDT(dev);
+
+    s->timer = ptimer_init(g233_wdt_timeout, s,
+                           PTIMER_POLICY_NO_COUNTER_ROUND_DOWN |
+                           PTIMER_POLICY_TRIGGER_ONLY_ON_DECREMENT);
+
+    ptimer_transaction_begin(s->timer);
+    ptimer_set_freq(s->timer, 1000); /* 1 tick = 1 ms */
+    ptimer_set_limit(s->timer, 0xffff, 1);
+    ptimer_transaction_commit(s->timer);
+}
+```
+
+如果后面接入 QEMU Clock QOM，也可以改成 `ptimer_set_period_from_clock()`；Day3 先不用把时钟树做复杂。
 
 ### 8.2 read/write 语义
 
@@ -690,31 +760,30 @@ write：
 
 ### 8.3 countdown 的实现方式
 
-为了让 `VAL` 在 `qtest_clock_step(10ms)` 后变小，可以在读 `VAL` 前更新一次：
+为了让 `VAL` 在 `qtest_clock_step(10ms)` 后变小，使用 `ptimer_get_count()` 最直接：
 
 ```c
-static void g233_wdt_update_val(G233WDTState *s)
+case WDT_VAL:
+    return ptimer_get_count(s->timer);
+```
+
+启动和 reload 时统一走 transaction：
+
+```c
+static void g233_wdt_reload(G233WDTState *s, bool run)
 {
-    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-
-    if (!(s->ctrl & WDT_CTRL_EN)) {
-        return;
+    ptimer_transaction_begin(s->timer);
+    ptimer_set_limit(s->timer, s->load, 1);
+    if (run) {
+        ptimer_run(s->timer, 1);
     }
-
-    if (now >= s->deadline_ns) {
-        s->val = 0;
-        return;
-    }
-
-    /*
-     * 教学版最小模型：把剩余时间映射成一个递减值。
-     * 不要求真实硬件频率，只要求虚拟时间推进后 val 变小。
-     */
-    s->val = remaining_time_to_val(s, s->deadline_ns - now);
+    ptimer_transaction_commit(s->timer);
 }
 ```
 
-也可以在 timer callback 前只保证 `VAL` 大致递减，不做精确换算。关键是测试里：
+这里的 `ptimer_run(timer, 1)` 表示 one-shot：倒到 0 后触发一次 callback。对 WDT 测题来说，这比 periodic 更贴合，因为 timeout 后测试只检查 `TIMEOUT` 和 IRQ，不要求自动重装继续跑。
+
+关键是测试里：
 
 ```text
 val1 = read WDT_VAL
@@ -723,7 +792,7 @@ val2 = read WDT_VAL
 assert val2 < val1
 ```
 
-所以 `VAL` 不能永远等于 `LOAD`。
+所以 `VAL` 不能永远等于 `LOAD`。用 `ptimer` 后，这件事由 QEMU 的 down-counter 帮你维护。
 
 ### 8.4 feed / lock / timeout
 
@@ -732,12 +801,13 @@ feed：
 ```c
 static void g233_wdt_feed(G233WDTState *s)
 {
-    s->val = s->load;
     s->sr &= ~WDT_SR_TIMEOUT;
     g233_wdt_update_irq(s);
 
     if (s->ctrl & WDT_CTRL_EN) {
-        g233_wdt_rearm(s);
+        g233_wdt_reload(s, true);
+    } else {
+        g233_wdt_reload(s, false);
     }
 }
 ```
@@ -761,7 +831,6 @@ static void g233_wdt_timeout(void *opaque)
 {
     G233WDTState *s = opaque;
 
-    s->val = 0;
     s->sr |= WDT_SR_TIMEOUT;
     g233_wdt_update_irq(s);
 }
@@ -1002,7 +1071,7 @@ g233/wdt/timeout_clear PASS
 | 现象 | 优先排查 |
 | --- | --- |
 | feed 后 `VAL` 没变大 | `WDT_KEY=0x0C` 是否写对，feed 是否 reload |
-| 500ms 后没有 TIMEOUT | timer 没 rearm，或 load 到 timeout 的映射太长 |
+| 500ms 后没有 TIMEOUT | `ptimer_run()` 没执行、`ptimer_set_freq/period` 没设置，或 load 到 timeout 的映射太长 |
 | TIMEOUT 清不掉 | `WDT_SR=0x10` 是否按测题写，W1C 是否写反 |
 
 ### 阶段 7：WDT lock 和 IRQ
@@ -1064,14 +1133,26 @@ qtest-riscv64/test-wdt-timeout PASS
 | `TIMEOUT` 怎么清 | 写 1 清除，W1C |
 | 以哪个 WDT offset 为准 | 以测题为准：`KEY=0x0C`，`SR=0x10` |
 
-### QEMUTimer
+### 虚拟时间选择
 
 | 问题 | 答案 |
 | --- | --- |
 | `qtest_clock_step` 推进什么 | QEMU 虚拟时间，不是宿主 sleep |
-| PWM/WDT 该用什么 clock | 优先 `QEMU_CLOCK_VIRTUAL` |
-| timer callback 改什么 | PWM 改 `CNT/DONE`，WDT 改 `VAL/TIMEOUT/IRQ` |
-| reset/disable 时要做什么 | 清状态，并 `timer_del` 取消未来事件 |
+| PWM 默认用什么 | `QEMUTimer + elapsed time` |
+| WDT 默认用什么 | `ptimer` |
+| 底层时间源 | 都应该跟虚拟时间走，避免宿主真实时间影响 qtest |
+| timer callback 改什么 | PWM 主要置 `DONE`，`CNT` 由 elapsed time 推导；WDT callback 置 `TIMEOUT/IRQ` |
+| reset/disable 时要做什么 | PWM `timer_del`，WDT `ptimer_stop`，并清状态 |
+
+### ptimer
+
+| 问题 | 答案 |
+| --- | --- |
+| `ptimer` 更像什么 | 一个 QEMU 封装好的 periodic down-counter |
+| 为什么 WDT 适合 | `LOAD/VAL` 正好对应 `limit/count` |
+| WDT `VAL` 怎么读 | `ptimer_get_count(timer)` |
+| WDT feed 怎么做 | `ptimer_set_count()` 或重新 `ptimer_set_limit(..., reload=1)` |
+| PWM 能不能用 | 能，但要把递减 count 转成递增 `CNT = PERIOD - count` |
 
 ### 实现顺序
 
@@ -1115,7 +1196,8 @@ Day3 给 SPI 铺好的能力：
 
 | Day3 能力 | SPI 里怎么复用 |
 | --- | --- |
-| `QEMUTimer` | transfer 完成、flash busy 清除 |
+| `QEMUTimer` | transfer 完成、flash busy 清除、PWM elapsed-time 模型 |
+| `ptimer` | WDT 这类 down-counter，或者后续更正式的 timer 模型 |
 | W1C | `SPI_SR.OVERRUN` |
 | IRQ 投影 | `TXE/RXNE/ERRIE -> SPI IRQ 5` |
 | state 拆分 | controller state + flash state |
