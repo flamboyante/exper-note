@@ -319,11 +319,13 @@ program:
 
 虽然测题会先 erase 再 program，所以直接赋值也可能过，但文档建议用 `old & new`，这是更像真实 flash 的写法。
 
-### 3.4 dummy byte 是什么
+### 3.4 dummy clock 和 dummy byte 怎么区分
 
-SPI 是 full-duplex。master 每发一个 byte，slave 也会同时返回一个 byte。Flash 没有“单独读”的动作，所谓读数据，本质上仍然是 master 继续发送 byte，给总线提供时钟，slave 才能在 MISO 上吐出数据。
+SPI 是 full-duplex。master 每发一个 byte，slave 也会同时返回一个 byte。Flash 没有“单独读”的动作，所谓读数据，本质上仍然是 master 继续发送 byte，给总线提供 SCLK，slave 才能在 MISO 上吐出数据。
 
-所以测题里这些 `0x00` 不是为了把 0 写进 Flash：
+Flash 手册或时序图里的 **dummy clock** 是器件层面的说法：命令和地址之后，Flash 可能需要若干个 SCLK 周期准备数据。在这些 clock 上，MOSI 的值通常没有意义，MISO 可能也还不是有效数据。
+
+但从软件和 SPI controller 的视角看，软件不能直接“发送 clock”。master 只有写 `SPI_DR` 发送一个 byte，控制器才会产生 8 个 SCLK。所以测题里这些 `0x00` 不是为了把 0 写进 Flash，而是用一个 dummy byte 触发一组 clock：
 
 ```c
 id[0] = spi_transfer_byte(qts, 0x00);
@@ -331,14 +333,15 @@ id[1] = spi_transfer_byte(qts, 0x00);
 id[2] = spi_transfer_byte(qts, 0x00);
 ```
 
-它们是 dummy byte：
+这几个 byte 在代码层面是 dummy byte：
 
 ```text
-MOSI: 0x00 只是占位，用来产生时钟
+MOSI: 0x00 只是占位
+SCLK: 由 master/controller 因这次 transfer 产生
 MISO: Flash 在同一拍返回 JEDEC / data / status
 ```
 
-🧠 我的理解：SPI 里“读”也必须“写”。这不是写内存，而是 master 用 MOSI 上的 dummy byte 换 MISO 上的有效数据。
+🧠 我的理解：SPI 里“读”也必须“写”。这不是写内存，也不是 Flash 自己产生 clock，而是 master 用 MOSI 上的 dummy byte 产生 clock，再换 MISO 上的有效数据。
 
 ---
 
@@ -1234,7 +1237,7 @@ byte 0:
   MISO rx = 0xFF   // 命令阶段返回值不重要
 
 byte 1:
-  MOSI tx = 0x00   // dummy，提供时钟
+  MOSI tx = 0x00   // dummy byte，触发 master 产生时钟
   flash phase: JEDEC
   MISO rx = 0xEF
 
@@ -1273,7 +1276,7 @@ byte 3:
   MISO rx = 0xFF
 
 byte 4..:
-  MOSI tx = 0x00 dummy
+  MOSI tx = 0x00 dummy byte
   phase: READ
   MISO rx = storage[addr++]
 ```
