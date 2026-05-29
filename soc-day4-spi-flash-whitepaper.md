@@ -295,6 +295,8 @@ busy_timer 到期:
   WEL = 0
 ```
 
+这里要把两类状态分开：`program_touched` / `erase_pending` 是当前 CS transaction 的临时标志，用来告诉 `cs_deassert` 这条命令是否需要 finalize；`BUSY` / `WEL` 是 Flash status，给软件通过 `READ_STATUS` 观察。transaction 标志应该在 transaction reset 时清掉，不应该留给 `busy_timer` 到期时再清。
+
 BUSY 期间的命令处理建议：
 
 | 命令 | BUSY=1 时建议 |
@@ -1176,6 +1178,8 @@ static void g233_spi_flash_cs_deassert(G233SPIFlash *f)
 注意：`READ_DATA`、`READ_STATUS`、`JEDEC_ID` 这类读命令在 CS deassert 时只需要清 transaction 临时状态，不需要 busy。
 
 erase/program finalize 都必须受 `WEL` 约束：没有先执行 `WRITE_ENABLE`，就算收到了 `SECTOR_ERASE` 或 `PAGE_PROGRAM`，也应该忽略写入/擦除，不应该置 BUSY。上面的 `erase_sector_now()` 里也会检查 `WEL`，这里再判断一次是为了避免“没有实际 erase 却启动 busy timer”。
+
+`program_touched` 和 `erase_pending` 只描述“本次 transaction 发生过什么”：`PAGE_PROGRAM` 至少写入一个 data byte 后置 `program_touched`，`SECTOR_ERASE` 收完 3 字节地址后置 `erase_pending`。无论这次 transaction 最后有没有因为 `WEL` 进入 busy，`cs_deassert` 收尾后都应该清掉这些临时标志。`busy_done` 不需要知道 busy 的原因，只负责把 `BUSY/WEL` 清掉。
 
 ### 8.7 erase 和 busy
 
