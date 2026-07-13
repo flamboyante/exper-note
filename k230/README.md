@@ -17,6 +17,10 @@
   - 记录 K230 当前 QEMU 支持程度、SDK/Linux/U-Boot 现实状态、启动介质、RAM 执行和 OpenSBI 位置。
   - 第一次了解 K230 训练营任务时优先读这一篇。
 
+- [K230 完整启动与 IOMUX 验证](./uboot-iomux-unimplemented-repro.md)
+  - 以 `k230-boot-assets` 为默认镜像来源，给出 Yocto direct boot、Buildroot direct boot、U-Boot boot 和 IOMUX 验证命令。
+  - 说明本地 `k230_sdk` 与预构建镜像的版本关系、QEMU 适配差异和当前存储启动边界。
+
 - [K230 QEMU 对象模型与外设接线学习笔记](./k230-qemu-object-model-study.md)
   - 解释 K230 machine、SoC、SysBusDevice、MemoryRegion、PLIC/IRQ 接线等基础结构。
   - 适合作为写新 K230 外设前的 QOM/QEMU 代码地图。
@@ -30,10 +34,6 @@
 - [K230 IOMUX/Pinctrl 三阶段入门指南](./k230-iomux-three-stage-guide.md)
   - 记录 IOMUX/Pinctrl 的第一版实现边界、证据链、qtest 和上游提交思路。
   - 适合复盘“从 unimplemented 到可验证寄存器模型”的完整路径。
-
-- [U-Boot IOMUX unimplemented 复现实验](./uboot-iomux-unimplemented-repro.md)
-  - 记录 U-Boot 访问 IOMUX 未实现寄存器时的现象和复现方式。
-  - 适合定位“为什么只是寄存器 bank 也能影响启动”的问题。
 
 ## 下一阶段候选
 

@@ -22,6 +22,10 @@ qemu-camp-2026/
 - [训练营实验仓库](../qemu-camp-2026-exper-flamboyante)
 - [C 基础练习仓库](../qemu-camp-2026-c-flamboyante)
 
+## 上游沟通
+
+- [上游邮件沟通日志](./upstream-mail-log.md)
+
 ## 当前主线
 
 优先执行 SoC 方向，不继续横向扩散资料。
