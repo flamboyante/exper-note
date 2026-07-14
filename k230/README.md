@@ -37,9 +37,10 @@
 
 ## 下一阶段候选
 
-- [K230 SPI/QSPI/Flash Window 调研与实施计划](./k230-spi-qspi-flash-window-study-plan.md)
-  - 整理 `#14 qspi`、`#15 flash memory window`、`#18 spi` 的关系、推荐实现边界、参考代码和测试策略。
-  - 重点结论：K230 SPI/QSPI/OPI 应复用一个 DWC_ssi 风格模型，差异通过 `max-lines`、XIP/window 能力和是否挂 flash 区分。
+- [K230 SPI/QSPI 实施与 Phase 10 qtest 验收](./k230-spi-qspi-flash-window-study-plan.md)
+  - 对齐 10-Patch 主系列，记录 46 项 qtest、当前 RED 基线、逐项运行命令和后续 C 实现顺序。
+  - 重点结论：以 SDK/TRM 为规格，寄存器、PIO、IRQ、Flash、QSPI、HI_SYS 和 XIP 共用一个最终验收入口。
+  - 本地调试可使用 `bash tests/qtest/run-k230-dw-ssi-tests.sh <组或用例>`，彩色显示 PASS/FAIL/TIMEOUT、失败原因和复现命令。
 
 ## 常用源码跳转
 
