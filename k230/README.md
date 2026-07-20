@@ -35,12 +35,33 @@
   - 记录 IOMUX/Pinctrl 的第一版实现边界、证据链、qtest 和上游提交思路。
   - 适合复盘“从 unimplemented 到可验证寄存器模型”的完整路径。
 
-## 下一阶段候选
+## SPI/QSPI 当前实施入口
 
-- [K230 SPI/QSPI 实施与 Phase 10 qtest 验收](./k230-spi-qspi-flash-window-study-plan.md)
-  - 对齐 10-Patch 主系列，记录 46 项 qtest、当前 RED 基线、逐项运行命令和后续 C 实现顺序。
-  - 重点结论：以 SDK/TRM 为规格，寄存器、PIO、IRQ、Flash、QSPI、HI_SYS 和 XIP 共用一个最终验收入口。
-  - 本地调试可使用 `bash tests/qtest/run-k230-dw-ssi-tests.sh <组或用例>`，彩色显示 PASS/FAIL/TIMEOUT、失败原因和复现命令。
+- [K230 SPI/QSPI 最终处理报告](./k230-spi-qspi-final-report.md)
+  - 面向对外展示的能力清单、TRM/SDK/源码/qtest 证据、审阅结论和复现命令。
+
+- [K230 SPI/QSPI 实施与 qtest Study](./k230-spi-qspi-flash-window-study-plan.md)
+  - 历史学习材料；正式系列已收敛为 9 个提交，顺序为寄存器模型、实例、PIO、IRQ、PLIC、QSPI、SPI NOR、HI_SYS、XIP。
+  - qtest 只保留 `k230-dw-ssi-test.c`，最终为 7 个场景、TAP `1..7`、7/7 通过；以最终处理报告为准。
+
+- [K230 SSI Patch 3 学习工作簿](./k230-spi-patch3-learning-workbook.md)
+  - 逐步讲解 Standard TR/TO/RO/EEPROM_READ、FIFO 背压、NDF 和动态 BUSY。
+
+- [K230 SSI Patch 4：Standard SPI NOR 学习工作簿](./k230-spi-patch4-learning-workbook.md)
+  - 按 TRM、K230 SDK 和 QEMU M25P80 三层证据说明 W25Q256 板级接线。
+  - 讲解 TO/EEPROM_READ Flash 事务、MTD backend、六项 qtest 和真实 U-Boot 验证边界。
+
+- [K230 SSI Patch 5：Dual/Quad QSPI 学习工作簿](./k230-spi-patch5-learning-workbook.md)
+  - 讲解 Enhanced instruction/address/mode/dummy/data 阶段、RO/TO 数据路径和六项 qtest。
+
+- [K230 SSI Patch 6：控制器内部 IRQ 学习工作簿](./k230-spi-patch6-learning-workbook.md)
+  - 讲解 RISR/ISR/IMR、动态水位、锁存错误、RC 清除、九路输出和 Patch 7 边界。
+
+- [K230 SSI Patch 7：PLIC 接线学习工作簿](./k230-spi-patch7-learning-workbook.md)
+  - 讲解三个逻辑 SSI 实例、27 路 PLIC source、显式路由表和五项 routing qtest。
+
+- [旧 Patch 计划迁移说明](./k230-spi-qspi-patch-plan.md)
+  - 仅用于兼容历史链接，不再维护独立 Patch 状态或 qtest 表。
 
 ## 常用源码跳转
 
