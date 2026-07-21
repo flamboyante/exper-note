@@ -37,6 +37,10 @@
 
 ## SPI/QSPI 当前实施入口
 
+- [K230 U-Boot 从 SPI Flash 启动 Linux：最小复现](./k230-spi-flash-uboot-linux-quickstart.md)
+  - 面向当前 `k230-spiv2` 分支的最短复现路径：准备 W25Q256 镜像、`sf read` 和 `bootm`。
+  - 仅覆盖 Standard SPI NOR，不覆盖 QSPI、XIP 或 BootROM 启动。
+
 - [K230 SPI/QSPI 最终处理报告](./k230-spi-qspi-final-report.md)
   - 面向对外展示的能力清单、TRM/SDK/源码/qtest 证据、审阅结论和复现命令。
 
