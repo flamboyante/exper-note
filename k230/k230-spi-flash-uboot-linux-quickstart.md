@@ -1,6 +1,17 @@
 # K230 U-Boot 从 SPI Flash 启动 Linux：最小复现
 
-记录时间：2026-07-21
+记录时间：2026-07-22
+
+## 中文 PR 实现说明
+
+> 本系列为 K230 machine 增加 Standard SPI 控制器与 SPI NOR Flash 支持。
+> machine 通过可选的 `spi-flash` 属性，将 M25P80 兼容 Flash 接到
+> `spi0@91584000` 的 CS0，并使用 `-drive if=mtd` 提供 Flash 后端。
+> 集成验证使用现成的 OpenSBI、Yocto Linux、initrd 和 DTB 组成 32 MiB
+> W25Q256 镜像。U-Boot 可以通过 `sf probe`、`sf read` 将四个镜像读入
+> RAM，再使用 `bootm` 启动 Linux 6.18.28，最终进入 initramfs shell。
+> 该验证覆盖 U-Boot 从 Standard SPI NOR 加载 Linux 的路径，不覆盖
+> BootROM 从 Flash 加载 U-Boot，也不包含 QSPI 或 XIP 启动。
 
 ## 结论
 
@@ -114,6 +125,61 @@ fdt set /chosen linux,initrd-start <0x0 0x0a100000>
 fdt set /chosen linux,initrd-end <0x0 0x0a2eec20>
 bootm 0x0c100000 - 0x0a000000
 ```
+
+## 自动执行
+
+手动命令确认无误后，可以把同一组命令编入 U-Boot 默认 `bootcmd`。Flash
+镜像及偏移不变，也不需要额外生成 environment 镜像。
+
+修改 U-Boot 的 `include/configs/k230_evb.h`，将原来的：
+
+```c
+#define DEFAULT_BOOTCMD_ENV "bootcmd=k230_boot auto auto_boot; \0"
+```
+
+替换为：
+
+```c
+#define DEFAULT_BOOTCMD_ENV \
+    "bootcmd=" \
+    "setenv bootargs console=ttyS0,115200 earlycon=sbi; " \
+    "sf probe 0:0; " \
+    "sf read 0x0c100000 0x0 0x14000; " \
+    "sf read 0x08200000 0x100000 0x1a1fe00; " \
+    "sf read 0x0a100000 0x1c00000 0x1eec20; " \
+    "sf read 0x0a000000 0x1f00000 0x1000; " \
+    "fdt addr 0x0a000000; " \
+    "fdt resize 8192; " \
+    "fdt set /chosen linux,initrd-start <0x0 0x0a100000>; " \
+    "fdt set /chosen linux,initrd-end <0x0 0x0a2eec20>; " \
+    "bootm 0x0c100000 - 0x0a000000; \0"
+```
+
+然后使用系统中的 RISC-V 交叉工具链重新构建 U-Boot：
+
+```bash
+UBOOT_SRC=./build/k230-uboot-src
+CROSS_COMPILE=riscv64-linux-gnu-
+
+make -C "$UBOOT_SRC" CROSS_COMPILE="$CROSS_COMPILE" k230_canmv_defconfig
+make -C "$UBOOT_SRC" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
+```
+
+将 QEMU 命令中的 U-Boot 改为新构建的 ELF：
+
+```bash
+UBOOT_SPI="$UBOOT_SRC/u-boot"
+
+"$QEMU" \
+    -machine k230,spi-flash=w25q256 \
+    -drive if=mtd,format=raw,file="$FLASH" \
+    -bios "$UBOOT_SPI" \
+    -serial stdio -monitor none -display none -no-reboot
+```
+
+U-Boot 等待 `bootdelay` 结束后会自动执行 `sf probe`、`sf read` 和 `bootm`，
+不再需要在 `K230#` 手动输入命令。当前 QEMU 没有 MMC，U-Boot 读取 MMC
+environment 失败后会使用这里编译进去的默认 `bootcmd`。
 
 ## 关键日志
 
