@@ -9,12 +9,15 @@
 ## English cover letter
 
 ~~~text
-Subject: [PATCH v3 00/10] hw/riscv: Add K230 SPI, QSPI, IDMA and XIP support
+Subject: [PATCH 00/10] hw/riscv: Add K230 SPI, QSPI, IDMA and XIP support
 
 Hi,
 
-This series adds the Kendryte K230 DesignWare SSI controllers and their
-machine integration.
+The k230 machine currently models the C908 core, CLINT, PLIC, watchdogs
+and UARTs; SDK storage boot is not yet possible. This series adds the
+Kendryte K230 DesignWare SSI controllers and their machine integration,
+enabling SPI NOR boot from U-Boot through standard PIO, QSPI IDMA, and
+the XIP read window.
 
 K230 contains three SSI instances with different capabilities. The SDK
 numbers them according to the address map: spi0 is the SPI-OPI instance,
@@ -29,20 +32,6 @@ enhanced transfers, flash integration, IDMA, HI_SYS, and XIP. A single
 K230 SSI qtest binary grows with the series and exercises each layer when
 it becomes available.
 
-Changes in v3.2:
-
-* Drop all MAINTAINERS changes from the series.
-* Use complete copyright, SPDX, TRM, and product-reference headers for
-  the new SSI and HI_SYS source/header files.
-* Add the copyright header to the K230 SSI qtest.
-* Explain the SDK spi0/spi1/spi2 numbering relationship directly beside
-  the machine routing table.
-* Document why IDMA completes synchronously in the model.
-* Document the SDK-specific 1-4-4 mode-byte handling.
-* Clarify the TRM address-space conflict between HI_SYS SSI_CTRL and the
-  controller-local DR2 offset.
-* Refresh all ten commit messages and verification statements.
-
 Testing:
 
 * Built qemu-system-riscv64 at every commit with the riscv64-softmmu
@@ -53,15 +42,16 @@ Testing:
   qspi-config, spi-nor, qspi-sdr, idma, hi-sys, and xip-read-window.
 * Standard SPI: U-Boot detected W25Q256, loaded OpenSBI, Linux, initrd,
   and DTB with sf read, and reached the Linux initramfs shell.
+* Linux: rebuilt the K230 SDK kernel with standard RISC-V PTE bits, since
+  QEMU's generic RISC-V MMU does not implement the T-HEAD C9xx MAEE
+  page-table attributes.
 * Quad SPI: with spi0 configured for 4-bit transfers, U-Boot erased a
   64 KiB sector, wrote and read back 256 bytes successfully, loaded all
   boot payloads from QSPI flash, and reached the Linux initramfs shell.
 * XIP: U-Boot read the OpenSBI uImage header from 0xc0000000, verified
   its checksum, and reached the Linux initramfs shell through bootm.
 * git diff --check reports no whitespace errors.
-* checkpatch reports no errors. The file-addition warnings for patches
-  1, 2, and 9 are expected because this revision intentionally contains
-  no MAINTAINERS changes.
+* checkpatch reports no errors.
 
 Kangjie Huang (10):
   hw/ssi: Add K230 DesignWare SSI register model
@@ -93,16 +83,3 @@ base-commit: f893c46c3931b3684d235d221bf8b7844ddbf1d7
 -- 
 2.43.0
 ~~~
-
-## 中文审阅要点
-
-- 系列保持 10 个补丁，不修改 `MAINTAINERS`。
-- 1/10 引入 SSI 模型文件及完整文件头；2/10 引入机器实例化和 qtest；
-  9/10 引入 HI_SYS 模型及完整文件头。
-- 5/10 直接解释 SDK 编号与物理实例关系，不再只描述“路由表”。
-- 8/10 明确同步 IDMA 是建模取舍，并解释 1-4-4 mode byte 的来源和
-  wait-cycle 消耗。
-- 9/10 明确 TRM 中 `HI_SYS_CONFIG + 0x068` 的 `SSI_CTRL` 与 SSI 控制器
-  相对偏移 `0x068` 的 `DR2` 属于不同地址空间。
-- 集成验证覆盖 Standard SPI、Quad SPI/IDMA 和 XIP 三条启动路径，均进入
-  Linux initramfs shell。
