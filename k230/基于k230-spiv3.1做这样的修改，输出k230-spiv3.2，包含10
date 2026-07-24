@@ -1,0 +1,88 @@
+基于k230-spiv3.1做这样的修改，输出k230-spiv3.2，包含10 patch
+
+1、maintainer文件取消修改,永远取消修改
+2、commit信息以 exper-note/k230/k230-spiv3.1-commit-messages-bilingual.md为准，十次commit-patch的
+3、头文件注释改为 以
+/*
+ * Kendryte K230 DesignWare SSI
+ *
+ * Copyright (c) 2026 Kangjie Huang <flamboyant.h.01@gmail.com>
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Emulates the DesignWare SSI controllers documented by the K230
+ * Technical Reference Manual, including standard SPI, Dual/Quad SDR,
+ * internal DMA, and the XIP read window.
+ *
+ * K230 Technical Reference Manual V0.3.1 (2024-11-18):
+ * https://github.com/revyos/external-docs/blob/master/K230/en-us/K230_Technical_Reference_Manual_V0.3.1_20241118.pdf
+ *
+ * For more information, see <https://www.kendryte.com/en/proDetail/230>
+ */
+
+/*
+ * Kendryte K230 HI_SYS
+ *
+ * Copyright (c) 2026 Kangjie Huang <flamboyant.h.01@gmail.com>
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Models the HI_SYS system control block, including the SSI_CTRL wrapper
+ * register that K230 firmware uses for XIP enable and SSI mode/sleep
+ * status.
+ *
+ * K230 Technical Reference Manual V0.3.1 (2024-11-18):
+ * https://github.com/revyos/external-docs/blob/master/K230/en-us/K230_Technical_Reference_Manual_V0.3.1_20241118.pdf
+ *
+ * For more information, see <https://www.kendryte.com/en/proDetail/230>
+ */
+
+/*
+ * QTest for the Kendryte K230 DesignWare SSI
+ *
+ * Copyright (c) 2026 Kangjie Huang <flamboyant.h.01@gmail.com>
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+补丁
+首次引入的文件
+头注释随此补丁写入
+
+1/10（寄存器模型）
+k230_dw_ssi.c + k230_dw_ssi.h
+是
+
+2/10（实例化 + qtest）
+k230-dw-ssi-test.c
+是
+
+9/10（HI_SYS）
+k230_hi_sys.c + k230_hi_sys.h
+是
+
+4、SSI 实例编号关系建议解释，而不是描述“这里有一张路由表”：
+/*
+ * SDK numbering follows the address map: spi0 is the SPI-OPI instance,
+ * while spi1 and spi2 are QSPI0 and QSPI1.
+ */
+
+ 5、同步 IDMA 是建模取舍，需要说明
+ /*
+ * Supported SDK paths observe the final memory contents and DONE/AXIE,
+ * so complete IDMA synchronously without modeling AXI timing or FIFO
+ * backpressure.
+ */
+
+ 6、mode byte 分支目前过于隐晦
+ /*
+ * The SDK's 1-4-4 read supplies its mode byte through XIP_MODE_BITS
+ * without XIP_MD_BIT_EN; one Quad byte consumes two wait cycles.
+ */·
+
+ 7、HI_SYS 文件头已经很好地解释了为什么 SSI_CTRL 不能当成控制器的 DR2：这个地方说明一下trm的冲突即可
+
+
+ 8、每次提交真正测试qtest和commit信息里的uboot or linux真实验证（可以参考exper-note/k230/k230-spi-flash-uboot-linux-quickstart.md）
+ 目的是通过
+
+ 9、形成一片完整的cover-letter 放到 expernote里，我审阅，包含合理内容

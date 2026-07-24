@@ -1,6 +1,6 @@
 # K230 U-Boot 从 SPI Flash 启动 Linux：最小复现
 
-记录时间：2026-07-22
+记录时间：2026-07-22；XIP 验证：2026-07-24
 
 ## 中文 PR 实现说明
 
@@ -11,13 +11,18 @@
 > W25Q256 镜像。U-Boot 可以通过 `sf probe`、`sf read` 将四个镜像读入
 > RAM，再使用 `bootm` 启动 Linux 6.18.28，最终进入 initramfs shell。
 > 该验证覆盖 U-Boot 从 Standard SPI NOR 加载 Linux 的路径，不覆盖
-> BootROM 从 Flash 加载 U-Boot，也不包含 QSPI 或 XIP 启动。
+> BootROM 从 Flash 加载 U-Boot，也不包含 QSPI 启动。`k230-spiv3.1`
+> 另外验证了 XIP window 可供 U-Boot 的 `bootm` 读取 OpenSBI。
 
 ## 结论
 
 在 QEMU 分支 `k230-spiv2` 上，U-Boot 可以通过标准 SPI NOR 的 `sf probe`
 和 `sf read` 从 Flash 读取 OpenSBI、Yocto Linux、initrd 与 DTB，并用
 `bootm` 启动到 initramfs shell。
+
+在 QEMU 分支 `k230-spiv3.1` 上，额外验证了 SPI0 的 XIP read window。
+U-Boot 仍使用 `sf read` 加载 Yocto Image、initrd 与 DTB；OpenSBI uImage
+则直接从 Flash 映射窗口 `0xc0000000` 交给 `bootm`。
 
 本页只验证：
 
@@ -28,7 +33,8 @@ QEMU -bios U-Boot
   -> Linux + initramfs
 ```
 
-不验证 BootROM 从 Flash 加载 U-Boot，也不讨论 QSPI、XIP 或 MMIO 模型实现。
+不验证 BootROM 从 Flash 加载 U-Boot，也不讨论 QSPI 或 MMIO 模型实现。
+XIP 仅验证 U-Boot 可从映射窗口读取 OpenSBI，不表示 Linux 从 Flash 直接执行。
 
 ## 前置条件
 
@@ -180,6 +186,68 @@ UBOOT_SPI="$UBOOT_SRC/u-boot"
 U-Boot 等待 `bootdelay` 结束后会自动执行 `sf probe`、`sf read` 和 `bootm`，
 不再需要在 `K230#` 手动输入命令。当前 QEMU 没有 MMC，U-Boot 读取 MMC
 environment 失败后会使用这里编译进去的默认 `bootcmd`。
+
+## XIP 读取 OpenSBI（spi3.1）
+
+本节使用 QEMU 分支 `k230-spiv3.1`（验证提交 `99c3ebb428`），复用前文的
+W25Q256 Flash 镜像和启用 SPI0 的 U-Boot。Flash 布局不变。
+
+与前面的标准 SPI 路径相比，只有 OpenSBI 的加载方式变化：不执行
+`sf read 0x0c100000 0x0 0x14000`，而是通过 SPI0 的 XIP window
+`0xc0000000` 直接让 `bootm` 读取 Flash 中偏移 `0x0` 的 OpenSBI uImage。
+Yocto Image、initrd 和 DTB 仍必须先读入 RAM。
+
+在 `K230#` 输入：
+
+```text
+setenv bootargs console=ttyS0,115200 earlycon=sbi
+sf probe 0:0
+sf read 0x08200000 0x100000 0x1a1fe00
+sf read 0x0a100000 0x1c00000 0x1eec20
+sf read 0x0a000000 0x1f00000 0x1000
+fdt addr 0x0a000000
+fdt resize 8192
+fdt set /chosen linux,initrd-start <0x0 0x0a100000>
+fdt set /chosen linux,initrd-end <0x0 0x0a2eec20>
+mw.l 0x91584008 0
+mw.l 0x91584000 0x4007
+mw.l 0x91584100 0x13
+mw.l 0x915840f4 0x100220
+mw.l 0x91585068 0x4001
+md.l 0xc0000000 1
+bootm 0xc0000000 - 0x0a000000
+```
+
+`sf probe` 会让 W25Q256 进入 4-byte address mode。因此，XIP 寄存器必须
+在所有 `sf read` 完成后重新配置；其中 `0x13` 是 4-byte Read opcode，
+`0x100220` 表示 8-bit instruction 加 32-bit address。若仍使用 3-byte read
+配置，XIP 读取会失败或错位。
+
+关键地址如下：
+
+| 名称 | 地址 |
+|---|---:|
+| SPI0 MMIO | `0x91584000` |
+| HI_SYS SSI_CTRL | `0x91585068` |
+| XIP Flash window | `0xc0000000` |
+
+以下是本次实际运行的关键输出：
+
+```text
+c0000000: 56190527
+## Booting kernel from Legacy Image at c0000000 ...
+Verifying Checksum ... OK
+Starting kernel ...
+
+OpenSBI v0.9
+[    0.000000] Linux version 6.18.28
+meta-k230 initramfs starting...
+~ #
+```
+
+`c0000000: 56190527` 与随后成功的 checksum 表明，U-Boot 已通过 XIP window
+读取到 Flash 中的 OpenSBI uImage。Linux 内核和 initramfs 仍由前面的
+`sf read` 放入 RAM 后启动；本节不是 Linux XIP 执行测试。
 
 ## 关键日志
 
