@@ -11,61 +11,84 @@
   -> 最后看启动链路和 U-Boot/Linux 验证路线
 ```
 
+## 子目录结构
+
+- `iomux/`           IOMUX/Pinctrl 主题
+- `spi/`             SPI / QSPI / Flash Window / patch 学习手册
+  - `spi/learning/`  patch3~8 + IDMA 学习手册
+- `upstream-review/` 上游 review 资料
+  - `current/`       最新版本(当前 v3.4)的 cover letter / commit messages
+  - `archive/`       历史版本(v3.02 / v3.1 / v3.2 / v3.3)
+- `reference/`       K230 TRM 原始 PDF 文本
+- `assets/`          TRM 截图
+
 ## 总览与背景
 
 - [K230 QEMU 训练营交流笔记](./k230-qemu-camp-notes.md)
   - 记录 K230 当前 QEMU 支持程度、SDK/Linux/U-Boot 现实状态、启动介质、RAM 执行和 OpenSBI 位置。
   - 第一次了解 K230 训练营任务时优先读这一篇。
 
-- [K230 完整启动与 IOMUX 验证](./uboot-iomux-unimplemented-repro.md)
+- [K230 完整启动与 IOMUX 验证](./spi/uboot-iomux-unimplemented-repro.md)
   - 以 `k230-boot-assets` 为默认镜像来源，给出 Yocto direct boot、Buildroot direct boot、U-Boot boot 和 IOMUX 验证命令。
-  - 说明本地 `k230_sdk` 与预构建镜像的版本关系、QEMU 适配差异和当前存储启动边界。
 
-- [K230 QEMU 对象模型与外设接线学习笔记](./k230-qemu-object-model-study.md)
+- [K230 QEMU 对象模型与外设接线学习笔记](../camp/k230-qemu-object-model-study.md)
   - 解释 K230 machine、SoC、SysBusDevice、MemoryRegion、PLIC/IRQ 接线等基础结构。
-  - 适合作为写新 K230 外设前的 QOM/QEMU 代码地图。
 
 - [QEMU 通用基础 MMIO 外设骨架模板](./qemu-basic-mmio-device-template.md)
   - 总结最小 MMIO 外设的文件布局、State、MemoryRegionOps、read/write/reset、Kconfig/meson/qtest 接入方式。
-  - 适合 IOMUX、CMU、RMU、简单 SYSCTRL 类寄存器块参考。
 
 ## 已推进外设
 
-- [K230 IOMUX/Pinctrl 三阶段入门指南](./k230-iomux-three-stage-guide.md)
+### IOMUX
+
+- [K230 IOMUX/Pinctrl 三阶段入门指南](./iomux/k230-iomux-three-stage-guide.md)
   - 记录 IOMUX/Pinctrl 的第一版实现边界、证据链、qtest 和上游提交思路。
-  - 适合复盘“从 unimplemented 到可验证寄存器模型”的完整路径。
 
-## SPI/QSPI 当前实施入口
+### SPI/QSPI
 
-- [K230 U-Boot 从 SPI Flash 启动 Linux：最小复现](./k230-spi-flash-uboot-linux-quickstart.md)
-  - 面向当前 `k230-spiv2` 分支的最短复现路径：准备 W25Q256 镜像、`sf read` 和 `bootm`。
-  - 仅覆盖 Standard SPI NOR，不覆盖 QSPI、XIP 或 BootROM 启动。
+- [K230 U-Boot 从 SPI Flash 启动 Linux：最小复现](./spi/k230-spi-flash-uboot-linux-quickstart.md)
+  - 面向当前 `k230-spiv2` 分支的最短复现路径。
 
-- [K230 SPI/QSPI 最终处理报告](./k230-spi-qspi-final-report.md)
+- [K230 SPI/QSPI 最终处理报告](./spi/k230-spi-qspi-final-report.md)
   - 面向对外展示的能力清单、TRM/SDK/源码/qtest 证据、审阅结论和复现命令。
 
-- [K230 SPI/QSPI 实施与 qtest Study](./k230-spi-qspi-flash-window-study-plan.md)
-  - 历史学习材料；正式系列已收敛为 9 个提交，顺序为寄存器模型、实例、PIO、IRQ、PLIC、QSPI、SPI NOR、HI_SYS、XIP。
-  - qtest 只保留 `k230-dw-ssi-test.c`，最终为 7 个场景、TAP `1..7`、7/7 通过；以最终处理报告为准。
+- [K230 SPI/QSPI 实施与 qtest Study](./spi/k230-spi-qspi-flash-window-study-plan.md)
+  - 历史学习材料；正式系列已收敛为 9 个提交。
 
-- [K230 SSI Patch 3 学习工作簿](./k230-spi-patch3-learning-workbook.md)
-  - 逐步讲解 Standard TR/TO/RO/EEPROM_READ、FIFO 背压、NDF 和动态 BUSY。
+- [K230 SPI/QSPI 寄存器审计](./spi/k230-spi-qspi-register-audit.md)
 
-- [K230 SSI Patch 4：Standard SPI NOR 学习工作簿](./k230-spi-patch4-learning-workbook.md)
-  - 按 TRM、K230 SDK 和 QEMU M25P80 三层证据说明 W25Q256 板级接线。
-  - 讲解 TO/EEPROM_READ Flash 事务、MTD backend、六项 qtest 和真实 U-Boot 验证边界。
-
-- [K230 SSI Patch 5：Dual/Quad QSPI 学习工作簿](./k230-spi-patch5-learning-workbook.md)
-  - 讲解 Enhanced instruction/address/mode/dummy/data 阶段、RO/TO 数据路径和六项 qtest。
-
-- [K230 SSI Patch 6：控制器内部 IRQ 学习工作簿](./k230-spi-patch6-learning-workbook.md)
-  - 讲解 RISR/ISR/IMR、动态水位、锁存错误、RC 清除、九路输出和 Patch 7 边界。
-
-- [K230 SSI Patch 7：PLIC 接线学习工作簿](./k230-spi-patch7-learning-workbook.md)
-  - 讲解三个逻辑 SSI 实例、27 路 PLIC source、显式路由表和五项 routing qtest。
-
-- [旧 Patch 计划迁移说明](./k230-spi-qspi-patch-plan.md)
+- [旧 Patch 计划迁移说明](./spi/k230-spi-qspi-patch-plan.md)
   - 仅用于兼容历史链接，不再维护独立 Patch 状态或 qtest 表。
+
+#### Patch 学习手册(`spi/learning/`)
+
+- [Patch 3 - Standard TR/TO/RO/EEPROM_READ](./spi/learning/k230-spi-patch3-learning-workbook.md)
+- [Patch 4 - Standard SPI NOR](./spi/learning/k230-spi-patch4-learning-workbook.md)
+- [Patch 5 - Dual/Quad QSPI](./spi/learning/k230-spi-patch5-learning-workbook.md)
+- [Patch 6 - 控制器内部 IRQ](./spi/learning/k230-spi-patch6-learning-workbook.md)
+- [Patch 7 - PLIC 接线](./spi/learning/k230-spi-patch7-learning-workbook.md)
+- [Patch 8 - 后续扩展](./spi/learning/k230-spi-patch8-learning-workbook.md)
+- [IDMA Patch](./spi/learning/k230-spi-idma-patch-learning-workbook.md)
+
+## 上游 Review 资料(`upstream-review/`)
+
+- [上游邮件沟通日志](./upstream-review/upstream-mail-log.md)
+- [IOMUX 上游 review 回复](./upstream-review/k230-iomux-upstream-review-reply.md)
+- [DW SSI 拆分分析](./upstream-review/k230-spi-qspi-dwssi-split-analysis.md)
+- [Review v2 决策记录](./upstream-review/k230-spi-qspi-review-v2-decision-notes.md)
+
+### 当前版本(v3.4，`upstream-review/current/`)
+
+- [Cover Letter](./upstream-review/current/k230-spiv3.4-cover-letter.md)
+- [Cover Letter 中文](./upstream-review/current/k230-spiv3.4-cover-letter-cn.md)
+- [Commit Messages Bilingual](./upstream-review/current/k230-spiv3.4-commit-messages-bilingual.md)
+
+### 历史版本(`upstream-review/archive/`)
+
+- v3.3：[Commit Messages](./upstream-review/archive/v3.3/k230-spiv3.3-commit-messages-bilingual.md)
+- v3.2：[Cover Letter](./upstream-review/archive/v3.2/k230-spiv3.2-cover-letter.md) / [中文](./upstream-review/archive/v3.2/k230-spiv3.2-cover-letter-cn.md) / [v3.1→v3.2 转换说明](./upstream-review/archive/v3.2/基于k230-spiv3.1做这样的修改，输出k230-spiv3.2，包含10)
+- v3.1：[Commit Messages](./upstream-review/archive/v3.1/k230-spiv3.1-commit-messages-bilingual.md)
+- v3.02：[Commit Messages](./upstream-review/archive/v3.02/k230-spiv3.02-commit-messages-bilingual.md)
 
 ## 常用源码跳转
 
@@ -85,8 +108,9 @@ K230 SDK：
 
 ## 维护规则
 
-- 新增 K230 相关笔记默认放在本目录。
+- 新增 K230 相关笔记按主题归入 `iomux/`、`spi/`、`upstream-review/` 等子目录。
 - 文件名使用 `k230-主题-用途.md`，例如 `k230-spi-qspi-flash-window-study-plan.md`。
 - 每篇笔记开头说明记录时间、问题背景、最终结论和适用范围。
 - 引用源码时优先使用从本目录出发的相对链接，保证 Markdown 预览可以直接跳转。
+- 发新版本时，`upstream-review/current/` 整体挪到 `upstream-review/archive/vX.Y/`，再把新版本放进 `current/`。
 - 对尚未实现的方案要明确写“支持”和“不支持”，避免把调研结论误读成已完成能力。

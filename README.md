@@ -22,6 +22,13 @@ qemu-camp-2026/
 - [训练营实验仓库](../qemu-camp-2026-exper-flamboyante)
 - [C 基础练习仓库](../qemu-camp-2026-c-flamboyante)
 
+## 目录结构
+
+- `camp/`  训练营课程笔记(SoC 白皮书、QEMU 各主题 study)
+- `k230/`   K230 实战主项目(SPI、IOMUX、上游 review 资料)
+  - `k230/upstream-review/current/`  最新版本 cover letter / commit messages
+  - `k230/upstream-review/archive/`  历史版本归档
+
 ## 上游沟通
 
 - [上游邮件沟通日志](./k230/upstream-review/upstream-mail-log.md)
@@ -30,13 +37,13 @@ qemu-camp-2026/
 
 优先执行 SoC 方向，不继续横向扩散资料。
 
-1. [SoC 七天完成计划](./soc-7day-plan.md)
-2. [Day 1 白皮书](./soc-day1-whitepaper.md)
-3. [早期 SoC 学习计划](./soc-study-plan.md)
+1. [SoC 七天完成计划](./camp/soc-7day-plan.md)
+2. [Day 1 白皮书](./camp/soc-day1-whitepaper.md)
+3. [早期 SoC 学习计划](./camp/soc-study-plan.md)
 
 ## 课程与视频地图
 
-- [QEMU 训练营 2026 讲义与视频对应表](./qemu-camp-2026-doc-video-map.md)
+- [QEMU 训练营 2026 讲义与视频对应表](./camp/qemu-camp-2026-doc-video-map.md)
 
 ## K230 专题
 
@@ -45,14 +52,14 @@ qemu-camp-2026/
 
 ## 基础阶段笔记
 
-- [课程介绍学习笔记](./qemu-training-camp-2026-course-intro-study.md)
-- [启动参数分析学习资料](./qemu-startup-param-study.md)
-- [启动流程分析学习资料](./qemu-init-study.md)
+- [课程介绍学习笔记](./camp/qemu-training-camp-2026-course-intro-study.md)
+- [启动参数分析学习资料](./camp/qemu-startup-param-study.md)
+- [启动流程分析学习资料](./camp/qemu-init-study.md)
 
 ## 专业阶段与专题笔记
 
-- [QEMU 外设建模流程学习资料](./qemu-hw-study.md)
-- [基于 QEMU 调试 Linux 内核学习笔记](./qemu-gdb-kernel-debug-study.md)
+- [QEMU 外设建模流程学习资料](./camp/qemu-hw-study.md)
+- [基于 QEMU 调试 Linux 内核学习笔记](./camp/qemu-gdb-kernel-debug-study.md)
 
 ## 维护规则
 
