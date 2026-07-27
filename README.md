@@ -24,7 +24,7 @@ qemu-camp-2026/
 
 ## 上游沟通
 
-- [上游邮件沟通日志](./upstream-mail-log.md)
+- [上游邮件沟通日志](./k230/upstream-review/upstream-mail-log.md)
 
 ## 当前主线
 
