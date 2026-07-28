@@ -380,7 +380,7 @@ K230 TRM 12.3 能证明：
 
 对应学习资料：
 
-- [K230 TRM 12.3 SPI 中文学习版](k230-trm-12.3-spi-cn.md)
+- [K230 TRM 12.3 SPI 中文学习版](../reference/k230-trm-12.3-spi-cn.md)
 - 重点阅读“12.3.3.1 外设总线时序”和 `CTRLR0/CTRLR1/DRx` 位域说明。
 
 TRM 不证明：
@@ -1225,7 +1225,7 @@ CPU 自动从 `0xC0000000` 取指；reset vector、BootROM 分支、`ssi0_xip_en
 ### 15.1 U-Boot Standard 集成验证
 
 Patch 4 qtest 通过后，可复用
-[K230 完整启动与 IOMUX 验证](uboot-iomux-unimplemented-repro.md) 的方法，
+[K230 完整启动与 IOMUX 验证](../../iomux/uboot-iomux-unimplemented-repro.md) 的方法，
 用未修改的 U-Boot 二进制和 `/tmp` 派生 DTB启用：
 
 ```dts

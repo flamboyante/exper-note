@@ -22,21 +22,21 @@
 
 | 分类 | 能力 | 证据 |
 |---|---|---|
-| 已实现 | 三个 SSI 实例、地址、FIFO、DR 别名、4--32 bit 帧、四种 `TMOD` | [TRM 12.3](K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[模型](../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)，[控制器 qtest](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) |
-| 已实现 | 标准 PIO、loopback、动态状态、watermark、中断 RC、PLIC 九路映射 | [SDK 驱动](../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)，[控制器 qtest](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) |
-| 已实现 | Dual/Quad SDR PIO：指令、地址、mode bits、dummy cycles、读写和 RX FIFO 恢复 | [U-Boot 驱动](../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)，[qtest](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `qspi-sdr` |
-| 已实现 | SPI NOR 挂接后的 JEDEC、读、页写、扇区擦、CS 命令边界 | [qtest](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `spi-nor` |
-| 已实现 | `SSI_CTRL` 的 XIP enable、三实例模式/休眠状态 | [HI_SYS 模型](../../my-qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)，[qtest](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `hi-sys` |
-| 有限制支持 | `spi0` XIP 只读窗口，支持 Standard/Dual/Quad SDR、地址、mode bits、dummy cycles 和 1/2/4/8 字节读 | [TRM 5.3](K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[XIP 模型](../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)，[qtest](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `xip-read-window` |
-| 有限制支持 | `BAUDR`、`RX_SAMPLE_DELAY`、`SCPOL/SCPH/SSTE` 的寄存器契约 | [TRM 12.3](K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[模型](../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)；不模拟引脚波形/时间 |
-| 有限制支持 | `SPI_CTRLR0`、DMA 相关寄存器保存与掩码 | [SDK 结构](../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)，[寄存器审阅](k230-spi-qspi-register-audit.md) |
-| 未实现 | 内部 AXI DMA 实际 guest-memory 搬运、DONE/AXIE 事件 | [TRM 12.3.3.4](K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[审阅表](k230-spi-qspi-register-audit.md) |
-| 未实现 | Octal、DDR、RXDS/HyperBus 数据事务 | [TRM 5.3](K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[审阅表](k230-spi-qspi-register-audit.md) |
-| 未实现 | concurrent XIP、dynamic wait、XIP 写扩展 | [RT-Smart 条件布局](../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)，[审阅表](k230-spi-qspi-register-audit.md) |
+| 已实现 | 三个 SSI 实例、地址、FIFO、DR 别名、4--32 bit 帧、四种 `TMOD` | [TRM 12.3](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)，[控制器 qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) |
+| 已实现 | 标准 PIO、loopback、动态状态、watermark、中断 RC、PLIC 九路映射 | [SDK 驱动](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)，[控制器 qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) |
+| 已实现 | Dual/Quad SDR PIO：指令、地址、mode bits、dummy cycles、读写和 RX FIFO 恢复 | [U-Boot 驱动](../../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)，[qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `qspi-sdr` |
+| 已实现 | SPI NOR 挂接后的 JEDEC、读、页写、扇区擦、CS 命令边界 | [qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `spi-nor` |
+| 已实现 | `SSI_CTRL` 的 XIP enable、三实例模式/休眠状态 | [HI_SYS 模型](../../../my-qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)，[qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `hi-sys` |
+| 有限制支持 | `spi0` XIP 只读窗口，支持 Standard/Dual/Quad SDR、地址、mode bits、dummy cycles 和 1/2/4/8 字节读 | [TRM 5.3](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[XIP 模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)，[qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c) `xip-read-window` |
+| 有限制支持 | `BAUDR`、`RX_SAMPLE_DELAY`、`SCPOL/SCPH/SSTE` 的寄存器契约 | [TRM 12.3](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)；不模拟引脚波形/时间 |
+| 有限制支持 | `SPI_CTRLR0`、DMA 相关寄存器保存与掩码 | [SDK 结构](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)，[寄存器审阅](k230-spi-qspi-register-audit.md) |
+| 未实现 | 内部 AXI DMA 实际 guest-memory 搬运、DONE/AXIE 事件 | [TRM 12.3.3.4](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[审阅表](k230-spi-qspi-register-audit.md) |
+| 未实现 | Octal、DDR、RXDS/HyperBus 数据事务 | [TRM 5.3](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)，[审阅表](k230-spi-qspi-register-audit.md) |
+| 未实现 | concurrent XIP、dynamic wait、XIP 写扩展 | [RT-Smart 条件布局](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)，[审阅表](k230-spi-qspi-register-audit.md) |
 
 ## qtest 收敛与覆盖
 
-qtest 从 P2 起即收敛为一个源文件：[k230-dw-ssi-test.c](../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)，Meson 也只引用该文件。
+qtest 从 P2 起即收敛为一个源文件：[k230-dw-ssi-test.c](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)，Meson 也只引用该文件。
 
 原有细粒度断言按寄存器、PIO、IRQ/PLIC、SPI NOR、QSPI SDR、HI_SYS、XIP 合并为 7 个端到端场景：`register-contract`、`pio-data-path`、`interrupt-routing`、`spi-nor`、`qspi-sdr`、`hi-sys`、`xip-read-window`；最终 TAP 为 **1..7，7/7** 通过。
 

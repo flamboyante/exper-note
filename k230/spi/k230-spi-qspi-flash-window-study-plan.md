@@ -13,7 +13,7 @@
 
 寄存器位域、复位值、TRM 5.3/12.3 冲突和 SDK 证据统一查阅：
 
-- [K230 TRM 12.3 SPI 中文学习版（含 5.3 FMC 对照）](k230-trm-12.3-spi-cn.md)
+- [K230 TRM 12.3 SPI 中文学习版（含 5.3 FMC 对照）](reference/k230-trm-12.3-spi-cn.md)
 
 旧的 [K230 SPI/QSPI QEMU 上游 Patch 实施计划](k230-spi-qspi-patch-plan.md)
 只保留迁移说明，不再维护第二份状态表。
@@ -288,7 +288,7 @@ qtest 边界调整：
 
 配套逐步学习文稿：
 
-- [K230 SSI Patch 4：Standard SPI NOR 学习工作簿](k230-spi-patch4-learning-workbook.md)
+- [K230 SSI Patch 4：Standard SPI NOR 学习工作簿](learning/k230-spi-patch4-learning-workbook.md)
 
 建议标题：
 
@@ -372,7 +372,7 @@ qtest：
 
 配套逐步学习文稿：
 
-- [K230 SSI Patch 6：控制器内部 IRQ 学习工作簿](k230-spi-patch6-learning-workbook.md)
+- [K230 SSI Patch 6：控制器内部 IRQ 学习工作簿](learning/k230-spi-patch6-learning-workbook.md)
 
 建议标题：
 
@@ -412,7 +412,7 @@ I01 同时验证 TXE 随 `TXFTLR/TXFLR` 动态拉高和撤销，替代原 PIO �
 
 配套逐步学习文稿：
 
-- [K230 SSI Patch 7：PLIC 接线学习工作簿](k230-spi-patch7-learning-workbook.md)
+- [K230 SSI Patch 7：PLIC 接线学习工作簿](learning/k230-spi-patch7-learning-workbook.md)
 
 建议标题：
 
@@ -753,7 +753,7 @@ diff check PASS
 
 ### 11.2 启动资产和方法
 
-实验复用 [K230 完整启动与 IOMUX 验证](uboot-iomux-unimplemented-repro.md)
+实验复用 [K230 完整启动与 IOMUX 验证](../iomux/uboot-iomux-unimplemented-repro.md)
 中已经验证过的 U-Boot/Linux 启动方法。临时使用的公开预构建资产位于：
 
 ```text

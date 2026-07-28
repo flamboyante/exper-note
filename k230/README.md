@@ -13,9 +13,11 @@
 
 ## 子目录结构
 
-- `iomux/`           IOMUX/Pinctrl 主题
+- `iomux/`           IOMUX/Pinctrl 主题(含 U-Boot 启动验证)
 - `spi/`             SPI / QSPI / Flash Window / patch 学习手册
   - `spi/learning/`  patch3~8 + IDMA 学习手册
+  - `spi/reference/`  TRM 第 12.3 章 SPI 译本(大文件)
+  - `spi/PLAN.md`     SPI patch 重构计划
 - `upstream-review/` 上游 review 资料
   - `current/`       最新版本(当前 v3.4)的 cover letter / commit messages
   - `archive/`       历史版本(v3.02 / v3.1 / v3.2 / v3.3)
@@ -28,13 +30,13 @@
   - 记录 K230 当前 QEMU 支持程度、SDK/Linux/U-Boot 现实状态、启动介质、RAM 执行和 OpenSBI 位置。
   - 第一次了解 K230 训练营任务时优先读这一篇。
 
-- [K230 完整启动与 IOMUX 验证](./spi/uboot-iomux-unimplemented-repro.md)
+- [K230 完整启动与 IOMUX 验证](./iomux/uboot-iomux-unimplemented-repro.md)
   - 以 `k230-boot-assets` 为默认镜像来源，给出 Yocto direct boot、Buildroot direct boot、U-Boot boot 和 IOMUX 验证命令。
 
 - [K230 QEMU 对象模型与外设接线学习笔记](../camp/k230-qemu-object-model-study.md)
   - 解释 K230 machine、SoC、SysBusDevice、MemoryRegion、PLIC/IRQ 接线等基础结构。
 
-- [QEMU 通用基础 MMIO 外设骨架模板](./qemu-basic-mmio-device-template.md)
+- [QEMU 通用基础 MMIO 外设骨架模板](../camp/qemu-basic-mmio-device-template.md)
   - 总结最小 MMIO 外设的文件布局、State、MemoryRegionOps、read/write/reset、Kconfig/meson/qtest 接入方式。
 
 ## 已推进外设
@@ -45,6 +47,8 @@
   - 记录 IOMUX/Pinctrl 的第一版实现边界、证据链、qtest 和上游提交思路。
 
 ### SPI/QSPI
+
+- [SPI patch 重构计划](./spi/PLAN.md)
 
 - [K230 U-Boot 从 SPI Flash 启动 Linux：最小复现](./spi/k230-spi-flash-uboot-linux-quickstart.md)
   - 面向当前 `k230-spiv2` 分支的最短复现路径。
@@ -70,6 +74,10 @@
 - [Patch 8 - 后续扩展](./spi/learning/k230-spi-patch8-learning-workbook.md)
 - [IDMA Patch](./spi/learning/k230-spi-idma-patch-learning-workbook.md)
 
+#### 参考资料(`spi/reference/`)
+
+- [K230 TRM 12.3 SPI 中文学习版](./spi/reference/k230-trm-12.3-spi-cn.md) — TRM SPI 章节译本(2.3k 行,大文件)
+
 ## 上游 Review 资料(`upstream-review/`)
 
 - [上游邮件沟通日志](./upstream-review/upstream-mail-log.md)
@@ -94,10 +102,9 @@
 
 K230 QEMU 仓库：
 
-- [K230 machine](../../qemu-camp-2026-k230/hw/riscv/k230.c)
-- [K230 SoC 头文件](../../qemu-camp-2026-k230/include/hw/riscv/k230.h)
-- [K230 文档](../../qemu-camp-2026-k230/docs/system/riscv/k230.rst)
-- [K230 IOMUX 模型](../../qemu-camp-2026-k230/hw/misc/k230_iomux.c)
+- [K230 machine](../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
+- [K230 SoC 头文件](../../my-qemu-camp-2026-k230/include/hw/riscv/k230.h)
+- [K230 文档](../../my-qemu-camp-2026-k230/docs/system/riscv/k230.rst)
 
 K230 SDK：
 

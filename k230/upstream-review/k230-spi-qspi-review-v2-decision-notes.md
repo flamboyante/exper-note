@@ -1,9 +1,530 @@
-# K230 SPI/QSPI 上游 Review 与 v2 修改决策记录
+# K230 SPI/QSPI 上游 Review 与 v2 重构决策（合并版）
 
-记录时间：2026-07-27
+首次记录：2026-07-27
+
+合并更新：2026-07-28
+
 适用分支：`qemu-camp-2026-k230/k230-spiv3.4`
 问题来源：Bin Meng 对第 1 个 SSI patch 的 review
-文档状态：调查与决策记录，不代表 v2 代码已经实现
+文档状态：v2 唯一决策入口，不代表 v2 代码已经实现
+
+本文合并并取代以下两份阶段性分析：
+
+- `k230-spi-qspi-review-v2-decision-notes.md` 原始调查记录；
+- `k230-spi-qspi-dwssi-split-analysis.md` 通用层与 K230 层拆分分析。
+
+文末保留原始记录用于追溯；实施和 review 回复应以本文前半部分的“统一结论”为准。
+
+## 1. 最终结论摘要
+
+下一轮上游 v2 的核心不是把 `k230_dw_ssi.c` 简单改名，而是将当前模型重构为：
+
+1. 一个可被其他 SoC 复用的 Synopsys DesignWare SSI 通用模型；
+2. K230 machine 对三个 SSI 实例的配置、地址映射和外围连接；
+3. 独立的 K230 HI_SYS 模型；
+4. 默认不引入 `TYPE_K230_DW_SSI` wrapper。
+
+推荐的依赖关系为：
+
+```text
+TYPE_DW_SSI
+  ├── 标准寄存器、FIFO、PIO、TMOD
+  ├── 通用 IRQ
+  ├── optional enhanced SPI
+  ├── optional internal DMA
+  ├── optional XIP engine + XIP MMIO region
+  └── properties/capabilities
+
+K230 machine
+  ├── 配置三个 TYPE_DW_SSI 实例
+  ├── 映射控制器地址
+  ├── 连接 PLIC
+  ├── 挂接 SPI NOR
+  ├── 将 XIP region 映射到 0xc0000000
+  └── 连接 HI_SYS 与 SSI 的抽象信号
+```
+
+只有在后续逐项审阅中发现无法通过 property、capability、GPIO、QOM link 或通用查询接口表达的 K230 控制器语义时，才增加薄 wrapper。
+
+## 2. Review 要求与重构目标
+
+Bin Meng 要求把当前 K230 SSI 模型拆分为：
+
+- 通用的 Synopsys DesignWare SSI 控制器模型；
+- 可选的 K230-specific wrapper，仅在通用层不足以支持 K230 软件时保留。
+
+Review 的本质要求是复用边界，而不是文件命名：
+
+- DWC SSI IP 自身的寄存器和数据通路不得带 K230 依赖；
+- IP 综合配置应通过实例配置表达；
+- K230 物理地址、PLIC、HI_SYS 和 Flash 接线留在 SoC/machine；
+- 不应仅因为某个能力目前只在 K230 上使用，就把它命名为 K230-specific。
+
+v2 应避免声称完整覆盖全部 `DW_apb_ssi` 或 `DWC_ssi` 变体。更准确的范围是：
+
+> 实现由 K230 TRM、公开通用驱动和实际软件路径共同证明的 DWC SSI 子集，并用 capability 表达 K230 实例启用的可选能力。
+
+## 3. IP 身份与关键证据
+
+### 3.1 K230 使用 Synopsys DWC SSI IP
+
+K230 TRM 的 `SSIC_VERSION_ID` 描述明确提到 Synopsys component version，复位值为：
+
+```text
+0x3130332a  ->  "103*"
+```
+
+TRM 还大量使用以下综合参数名：
+
+- `SSIC_HAS_RX_SAMPLE_DELAY`、`SSIC_HAS_RXDS`、`SSIC_HAS_TX_RX_EN`；
+- `SSIC_SPI_MODE`、`SSIC_XIP_EN`、`SSIC_XIP_WRITE_EN`；
+- `SSIC_XIP_WRITE_REG_EN`、`SSIC_XIP_CONT_XFER_EN`；
+- `SSIC_AXI_DW`、`SSIC_DFLT_BAUDR`；
+- `SSIC_DFLT_AWLEN`、`SSIC_DFLT_ARLEN`；
+- `SSIC_RX_DLY_SR_DEPTH`、`SSIC_DM_EN`。
+
+这些名称表明 K230 TRM 描述的是 Synopsys DWC SSI 在 K230 上的具体综合配置，而不是 K230 自研 SPI 控制器。
+
+### 3.2 SDK U-Boot 驱动是通用 DesignWare 驱动
+
+K230 SDK 的 `drivers/spi/designware_spi.c` 来源于 U-Boot 通用 DesignWare SPI 驱动。K230 SDK 通过：
+
+```c
+#define SSIC_HAS_DMA 2   /* Internal DMA */
+```
+
+选择内部 AXI DMA 寄存器布局。驱动同时区分：
+
+- `SSIC_HAS_DMA == 1`：external DMA 水位寄存器；
+- `SSIC_HAS_DMA == 2`：内部 AXI DMA 寄存器。
+
+因此 IDMA 是 DWC SSI 的可选综合能力，不是 K230 外挂的 SoC DMA 模块。
+
+### 3.3 QEMU 已有 DesignWare 通用模型的组织先例
+
+QEMU 已有 `TYPE_DESIGNWARE_I2C` 通用模型，由具体 SoC 负责实例化和连接。DWC SSI 应采用同样的分层思路：通用 IP 模型加实例配置，而不是默认把整个设备放在 K230 命名空间下。
+
+### 3.4 DWC SSI 家族和版本表述
+
+当前证据包括：
+
+- K230 DTS 使用 `snps,dwc-ssi-1.01a`；
+- `SSIC_VERSION_ID` 表现为 `1.03*`；
+- TRM FMC 章节使用 `DWC_ssi` 名称；
+- Linux/U-Boot 驱动同时覆盖多个 DesignWare SSI 版本。
+
+`snps,dwc-ssi-1.01a` 与 component version `1.03*` 的准确关系仍可继续调查，但不应阻塞架构拆分。v2 使用中性的 `DW_SSI`/`dw-ssi` 命名，并在提交说明中限定实现范围，避免宣称精确模拟所有版本。
+
+## 4. 证据层级与使用原则
+
+| 证据 | 可以证明 | 不能单独证明 |
+|---|---|---|
+| DWC SSI Databook | IP 架构、寄存器通用语义、可选功能和信号语义 | K230 实例最终启用的综合参数 |
+| K230 TRM | K230 暴露的寄存器、复位值、系统连接和可观察行为 | 所有 DWC SSI 实例均具备相同行为 |
+| CoreConsultant 配置报告 | K230 对通用 IP 的具体参数选择 | SoC 地址、PLIC、HI_SYS 和 Flash 接线 |
+| K230 SDK 驱动 | 软件实际访问顺序和功能路径 | 行为是规范、workaround 还是驱动缺陷 |
+| Linux/U-Boot 通用驱动 | 多平台共性、版本和 capability 划分 | K230 的最终硬件配置 |
+| 其他 SoC 文档和驱动 | 同一功能的交叉验证 | K230-specific 集成语义 |
+| 实机和启动日志 | K230 的真实可观察行为 | 行为是否适用于其他 SoC |
+
+分类时遵循以下标准：
+
+### 4.1 DWC SSI 通用行为
+
+满足至少两项且没有相反证据：
+
+- DWC 文档明确规定；
+- Linux/U-Boot 通用驱动在多个平台使用；
+- 其他 SoC 实现与 K230 一致；
+- 不依赖 K230 地址、HI_SYS 或 SoC-specific 信号。
+
+### 4.2 DWC SSI 可配置能力
+
+DWC 资料将其描述为可选或由综合参数决定，而 K230 TRM/SDK 给出具体取值。这些内容应进入通用模型的 property 或 capability，不应直接写成 `K230_*` 常量。
+
+### 4.3 K230 SoC 集成
+
+明确位于控制器外部：
+
+- 三个 SSI 实例和 SDK 编号；
+- 控制器物理地址；
+- SSI IRQ 到 PLIC 的路由；
+- HI_SYS `SSI_CTRL`；
+- SPI NOR 挂接；
+- `0xc0000000` XIP aperture 的地址和大小；
+- 时钟、复位、IOMUX 等外围控制。
+
+### 4.4 K230-specific quirk
+
+只有同时满足以下条件，才增加 K230 quirk 或 wrapper 行为：
+
+- 通用 DWC 资料没有覆盖或给出不同语义；
+- K230 TRM 明确描述，或 SDK/实机可以稳定复现；
+- 无法通过正常综合参数或外部连接解释。
+
+单个 SDK 写法、单个复位值或单个 qtest 现象不足以证明 K230 quirk。
+
+## 5. 通用层与 K230 层的最终边界
+
+| 功能 | 最终归属 | v2 表达方式 |
+|---|---|---|
+| `CTRLR0/1`、`SSIENR`、`MWCR`、`SER`、`BAUDR` | DWC SSI 通用层 | 基础寄存器模型 |
+| FIFO、DR aliases、PIO、四种 TMOD | DWC SSI 通用层 | FIFO 深度可配置 |
+| `SR`、`IMR/ISR/RISR`、标准 ICR | DWC SSI 通用层 | IRQ 状态和输出 |
+| `IDR`、`VERSION` 和实例复位值 | DWC SSI 实例配置 | property/config，而非 K230 行为 |
+| Dual/Quad SDR、`SPI_CTRLR0` | DWC SSI 可选能力 | `has-enhanced-spi`、`max-lines` |
+| 内部 DMA 寄存器和传输 | DWC SSI 可选能力 | `has-idma` |
+| DONE/AXIE 等 IDMA IRQ | DWC SSI 可选能力 | capability 关闭时保持无效 |
+| XIP 指令、地址、mode、dummy 生成 | DWC SSI 可选能力 | `has-xip` |
+| XIP MMIO region 的访问语义 | DWC SSI 可选能力 | 通用模型第二个 MMIO region |
+| XIP region 大小 | 实例/SoC 配置 | `xip-window-size` |
+| XIP region 映射到 `0xc0000000` | K230 machine | `sysbus_mmio_map()` |
+| XIP enable 控制 | K230 HI_SYS 到 DWC SSI | 命名 GPIO 输入/输出 |
+| 三实例地址、CS、线宽配置 | K230 machine | 设置通用模型 properties |
+| PLIC IRQ 编号和接线 | K230 machine | `sysbus_connect_irq()` |
+| SPI NOR 型号和 CS 接线 | K230 machine | SSI bus/CS wiring |
+| HI_SYS `SSI_CTRL` 寄存器 | K230-specific misc 设备 | 保留 `k230_hi_sys` |
+| trace events | 跟随通用模型或 K230 集成归属 | 通用事件去除 K230 前缀 |
+
+其中“复位值属于 K230 实例配置”不等于“必须由 K230 wrapper 实现”。实例参数属于 SoC 配置，但可通过通用模型 property 传入。
+
+## 6. 推荐的代码结构
+
+### 6.1 文件和 QOM 类型
+
+```text
+hw/ssi/dw_ssi.c
+include/hw/ssi/dw_ssi.h
+hw/misc/k230_hi_sys.c
+include/hw/misc/k230_hi_sys.h
+hw/riscv/k230.c
+include/hw/riscv/k230.h
+```
+
+QOM 类型：
+
+```c
+#define TYPE_DW_SSI "dw-ssi"
+OBJECT_DECLARE_SIMPLE_TYPE(DwSsiState, DW_SSI)
+```
+
+Kconfig：
+
+```text
+config DW_SSI
+    bool
+    select SSI
+```
+
+K230 machine 选择 `DW_SSI`，不再由 `CONFIG_K230_DW_SSI` 编译通用控制器。
+
+### 6.2 最小属性集合
+
+第一版通用模型建议只实现当前有证据和实际需求的配置：
+
+| 属性 | 类型 | 含义 |
+|---|---|---|
+| `num-cs` | uint32 | 实例片选数量 |
+| `fifo-depth` | uint32 | TX/RX FIFO 深度 |
+| `max-lines` | uint32 | 最大数据线数，当前支持 1/4/8 |
+| `has-enhanced-spi` | bool | 是否具备增强 SPI 寄存器和事务 |
+| `has-idma` | bool | 是否具备内部 AXI DMA |
+| `has-xip` | bool | 是否具备 XIP 寄存器和访问接口 |
+| `component-id` | uint32 | `IDR` 复位值 |
+| `version-id` | uint32 | `SSIC_VERSION_ID` 复位值 |
+| `spi-ctrlr0-reset` | uint32 | `SPI_CTRLR0` 实例复位值 |
+| `xip-window-size` | uint64 | 可选 XIP MMIO region 大小 |
+
+暂不为未来未使用的变体实现完整 class hierarchy，也不在没有需求时实现 external DMA 数据通路。capability 关闭时，对应寄存器应 RAZ/WI，相关 IRQ 保持低电平。
+
+### 6.3 K230 已知实例配置
+
+当前 machine 代码确认的物理实例配置是：
+
+| 物理实例 | 当前数组下标 | CS 数 | 最大线宽 | 控制器 MMIO |
+|---|---:|---:|---:|---|
+| QSPI0 | 0 | 5 | 4 | `K230_DEV_QSPI0` |
+| QSPI1 | 1 | 5 | 4 | `K230_DEV_QSPI1` |
+| SPI-OPI/FMC | 2 | 1 | 8 | `K230_DEV_SPI` |
+
+共同的已知值包括：
+
+```text
+fifo-depth       = 256
+component-id     = 0xa1b2c3d5
+version-id       = 0x3130332a
+SPI profile      = 0x04000200
+FMC/OPI profile  = 0x28000200
+```
+
+`has-idma`、`has-xip` 和增强能力是否对三个实例全部启用，应在编码时按 TRM 实例配置表再次核对，不能因为当前模型对所有实例硬编码寄存器就默认全部为 `true`。
+
+### 6.4 编号映射注意事项
+
+SDK 逻辑编号和当前 C 数组下标不是同一个概念：SDK 的逻辑 `spi0` 对应物理 SPI-OPI/FMC 实例，而物理数组下标 0 是 QSPI0。
+
+v2 的代码、测试和 commit message 应统一使用清晰术语：
+
+- `logical_index`：SDK/HI_SYS 的 spi0、spi1、spi2；
+- `ssi_index`：QEMU `dw_ssi[]` 数组下标；
+- `QSPI0/QSPI1/SPI-OPI`：物理模块名称。
+
+不能把拆分分析中简化的“`num-cs=1`”应用到全部实例。
+
+## 7. HI_SYS 解耦方案
+
+当前模型存在反向依赖：DWC SSI include K230 HI_SYS，并保存 `K230HiSysState *`，XIP 读路径直接查询 `k230_hi_sys_xip_enabled()`。
+
+v2 应删除：
+
+```c
+#include "hw/misc/k230_hi_sys.h"
+K230HiSysState *hi_sys;
+k230_dw_ssi_set_hi_sys();
+```
+
+推荐依赖方向：
+
+```text
+错误：DWC SSI -> K230 HI_SYS
+正确：K230 HI_SYS -> DWC SSI 的抽象接口
+```
+
+具体接口建议：
+
+1. DWC SSI 提供名为 `xip-enable` 的 GPIO input；
+2. K230 HI_SYS 提供对应 GPIO output；
+3. HI_SYS reset 或写 `SSI_CTRL` 后更新输出电平；
+4. XIP 读路径只检查 DWC SSI 自身的 `xip_enabled` 状态；
+5. HI_SYS 读取 mode/sleep 状态时，通过 `DwSsiState` link 和通用 getter 查询。
+
+通用 getter 可以保留为：
+
+```c
+uint32_t dw_ssi_get_spi_mode(const DwSsiState *s);
+bool dw_ssi_is_sleeping(const DwSsiState *s);
+```
+
+依赖只允许 K230 HI_SYS 引用通用 DWC SSI，通用模型不能引用任何 K230 类型。
+
+## 8. XIP aperture 最终决策
+
+历史分析提出两个方案：
+
+| 方案 | 描述 | 问题 |
+|---|---|---|
+| A | 通用层只暴露 `xip_read()`，K230 wrapper 创建 MMIO region | 为单纯映射和 enable 联动引入 wrapper，职责偏薄且重复 |
+| B | 通用层提供完整 XIP region，K230 只决定映射地址 | 需要让窗口大小可配置，避免写死 K230 信息 |
+
+最终采用 **方案 B 的修正版**：
+
+- XIP 命令生成、SPI transaction 和 MMIO read 语义放在通用 DWC SSI；
+- 通用模型在 `has-xip=true` 时提供第二个 sysbus MMIO region；
+- region 大小由 `xip-window-size` 配置；
+- 通用模型不知道 `0xc0000000`；
+- K230 machine 将 SPI-OPI 实例的第二个 region 映射到 `K230_DEV_FLASH`；
+- XIP 是否可访问由 `xip-enable` GPIO 控制。
+
+这样保持了清晰边界：
+
+```text
+根据 XIP 寄存器生成 SPI 事务 = DWC SSI 行为
+窗口位于何处、大小是多少       = SoC 集成配置
+```
+
+仅映射第二个 sysbus MMIO region 不构成引入 K230 wrapper 的充分理由。
+
+## 9. 当前代码的主要重构点
+
+### 9.1 全局命名通用化
+
+需要系统性调整：
+
+- `K230DwSsiState` -> `DwSsiState`；
+- `TYPE_K230_DW_SSI` -> `TYPE_DW_SSI`；
+- `K230_DW_SSI_*` -> `DW_SSI_*`；
+- `k230_dw_ssi_*()` -> `dw_ssi_*()`；
+- trace event 去掉 `k230_` 前缀；
+- migration VMState 名称使用通用类型名。
+
+### 9.2 硬编码参数配置化
+
+当前以下值不能继续作为全局 K230 常量固定在通用模型中：
+
+- FIFO 256；
+- IDR/version；
+- SPI/FMC `SPI_CTRLR0` profile；
+- IDMA/XIP 能力存在性；
+- XIP 128 MiB 窗口。
+
+基础寄存器规范要求的通用 reset 可以保留为 DWC 常量；实例选择产生的 reset 值通过 property 设置。
+
+### 9.3 可选寄存器门控
+
+当前模型直接实现或 RAZ/WI 大量 XIP/IDMA 寄存器。v2 应按 capability 统一处理：
+
+- `has-idma=false`：IDMA 字段不可用，DONE/AXIE 不产生；
+- `has-xip=false`：XIP 寄存器 RAZ/WI，不创建或不映射 XIP region；
+- `has-enhanced-spi=false`：限制 `SPI_FRF` 和增强事务；
+- 超出 `max-lines` 的配置记录 guest error 并拒绝事务。
+
+避免在每个 read/write case 中复制 capability 判断，可使用小型辅助函数统一判断寄存器组是否存在。
+
+### 9.4 IRQ 输出
+
+标准 IRQ 和可选 IDMA/XIP IRQ 均属于通用模型。为保持 QEMU 接线稳定，可以暴露当前模型支持的最大 IRQ 集合，并在 capability 关闭时让可选 IRQ 永远保持低电平。K230 machine 只负责将这些输出连接到对应 PLIC source。
+
+## 10. v2 Patch 系列组织
+
+现有 11 个 patch 的功能层次可以保留，但所有控制器内部 patch 都应改成通用命名和依赖：
+
+1. `hw/ssi: Add a Synopsys DesignWare SSI register model`
+2. `hw/riscv/k230: Instantiate DesignWare SSI controllers`
+3. `hw/ssi: Implement DesignWare SSI FIFO and PIO transfers`
+4. `hw/ssi: Add DesignWare SSI interrupt support`
+5. `hw/riscv/k230: Route SSI interrupts to the PLIC`
+6. `hw/ssi: Implement DesignWare enhanced SPI transfers`
+7. `hw/riscv/k230: Attach SPI NOR flash to spi0`
+8. `hw/ssi: Implement optional DesignWare SSI internal DMA`
+9. `hw/misc: Add K230 HI_SYS SSI control`
+10. `hw/ssi: Implement optional DesignWare SSI XIP transfers`
+11. `hw/ssi: Add trace events for DesignWare SSI`
+
+各 patch 的职责要求：
+
+- Patch 1 建立通用类型、基础 properties 和寄存器契约；
+- Patch 2 只描述 K230 三实例配置和 MMIO；
+- Patch 3/4/6/8/10 不应 include K230 头文件；
+- Patch 5/7/9 中允许出现 K230 地址、PLIC、HI_SYS 和设备接线；
+- Patch 10 同时完成通用 XIP region、GPIO enable 和 K230 地址映射；
+- Patch 11 的通用 trace 使用 `dw_ssi_*` 命名，K230-only trace 留在对应 K230 文件。
+
+## 11. 测试重构
+
+测试应区分“通用 IP 契约”和“K230 集成契约”。
+
+### 11.1 通用 DWC SSI 测试
+
+候选覆盖：
+
+- 基础寄存器 reset/write mask；
+- DR aliases；
+- FIFO 深度和 TX/RX level；
+- 四种 TMOD；
+- 标准 IRQ；
+- capability 关闭时寄存器 RAZ/WI；
+- enhanced SPI；
+- IDMA success/error；
+- XIP 命令生成和读取。
+
+如果暂时没有方便的独立 test machine，可以先复用 K230 machine 访问实例，但测试函数和断言要明确标记为 DWC SSI 行为。后续再评估独立 `dw-ssi-test.c` 或最小测试设备。
+
+### 11.2 K230 集成测试
+
+保留并聚焦：
+
+- 三实例物理地址；
+- SDK 逻辑编号路由；
+- PLIC source 路由；
+- HI_SYS reset/write mask；
+- mode/sleep 状态；
+- HI_SYS `XIP_EN` 到 SSI 的连接；
+- SPI NOR 挂载；
+- `0xc0000000`、128 MiB XIP aperture。
+
+现有十个场景可以继续使用，但建议按归属重命名或拆组，避免把 K230 集成行为描述成通用 DWC SSI 规范。
+
+## 12. Databook 与证据闸门
+
+DWC SSI Databook 和 K230 CoreConsultant 配置报告仍然是高价值资料，但不建议阻塞 v2。
+
+### 12.1 当前可接受的实现标准
+
+- 通用模型只覆盖已有多源证据支持的功能；
+- 对未确认的 DWC 变体明确写出限制；
+- 不以“完整 DWC SSI 模型”作为提交宣称；
+- K230-specific 行为有 TRM、SDK 或实机证据；
+- 未确认字段保持 RAZ/WI 或不实现，而不是猜测；
+- capability 取值在 K230 machine 中有明确依据。
+
+### 12.2 Databook 的定位
+
+- 能获得时用于验证版本差异、可选寄存器和信号语义；
+- 受许可限制时不提交原始文档，只记录必要结论；
+- reviewer 对具体寄存器语义提出疑问时，再针对性补证据；
+- 不因为暂时缺少 Databook 而保留明显错误的 K230 反向依赖。
+
+## 13. 实施顺序与检查点
+
+推荐按以下顺序修改，避免一次性重写 1750 行模型：
+
+1. 重命名通用类型、文件和符号，保持行为不变；
+2. 删除 DWC SSI 对 `k230_hi_sys.h` 的依赖；
+3. 把 FIFO、ID/version、profile 和 capability 改为实例配置；
+4. 让 K230 machine 设置三个实例的 properties；
+5. 加 capability 寄存器和 IRQ 门控；
+6. 将 HI_SYS XIP enable 改成 GPIO 信号；
+7. 将 XIP region 改为可选、大小可配置的通用 region；
+8. 重组测试和 trace 命名；
+9. 逐 commit 编译、qtest、`git diff --check` 和 checkpatch；
+10. 最后重写 cover letter 和 v2 change log。
+
+每一步都应保持分支可编译，不能先移动代码、后续 patch 才修复中间提交。
+
+## 14. Cover letter 与 review 回复要点
+
+v2 cover letter 应直接说明：
+
+- 已按 review 将控制器重构为通用 `DW_SSI`；
+- K230 只负责配置和 SoC 集成；
+- IDMA、enhanced SPI 和 XIP 作为可选 DWC capability；
+- 删除了通用模型对 K230 HI_SYS 的依赖；
+- XIP 地址由 K230 machine 映射，XIP 事务由通用模型实现；
+- 当前模型范围是 K230 所需且有证据支持的 DWC SSI 子集。
+
+回复 Bin Meng 时可以简洁概括为：
+
+> The controller model has been split into a reusable DesignWare SSI
+> device and K230 machine integration. K230-specific addresses, PLIC
+> routing, HI_SYS control and flash wiring remain in the K230 machine,
+> while FIFO/PIO, interrupts, enhanced SPI, optional IDMA and the XIP
+> transaction engine are modeled as DesignWare SSI capabilities.
+
+## 15. 参考资料
+
+- [K230 TRM 文本](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)
+- [TRM 12.3 中文对照](../spi/reference/k230-trm-12.3-spi-cn.md)
+- [寄存器审阅表](../spi/k230-spi-qspi-register-audit.md)
+- [K230 Linux DTS](../../../k230_sdk/src/little/linux/arch/riscv/boot/dts/kendryte/k230.dtsi)
+- [K230 U-Boot DesignWare SPI 驱动](../../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)
+- [K230 Linux DesignWare SPI 核心](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core.c)
+- [K230 Linux-specific SPI 扩展](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core-k230.c)
+- [RT-Smart SPI 驱动](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)
+- [当前 K230 SSI 模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)
+- [当前 K230 SSI 头文件](../../../my-qemu-camp-2026-k230/include/hw/ssi/k230_dw_ssi.h)
+- [当前 K230 machine 集成](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
+- [当前 HI_SYS 模型](../../../my-qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
+- [当前 v3.4 cover letter](current/k230-spiv3.4-cover-letter.md)
+
+## 16. 合并版变更记录
+
+### 2026-07-28
+
+- 合并原 v2 决策记录和 DW SSI 拆分分析；
+- 明确默认不增加 K230 SSI wrapper；
+- 采用“通用 XIP region + 可配置大小 + K230 machine 映射”的方案；
+- 明确 HI_SYS 通过 GPIO/link 与通用模型解耦；
+- 修正全部实例 `num-cs=1` 的过度简化，记录实际 5/5/1 配置；
+- 增加 SDK 逻辑编号、QEMU 数组下标和物理模块名的区分；
+- 增加当前代码重构点、patch 顺序、测试边界和 review 回复建议；
+- 将 Databook 定位为增强证据，而不是架构拆分的前置阻塞项。
+
+---
+
+<details>
+<summary>历史原始记录：2026-07-27 v2 调查与决策记录</summary>
+
+> 以下内容按原样保留用于追溯，其中的“待决策”或阶段性结论可能已被上文取代。
 
 ## 1. Review 背景
 
@@ -211,16 +732,16 @@ K230 machine 负责：
 
 ## 10. 参考入口
 
-- [K230 TRM 文本](K230_Technical_Reference_Manual_V0.3.1_20241118.txt)
-- [K230 Linux DTS](../../k230_sdk/src/little/linux/arch/riscv/boot/dts/kendryte/k230.dtsi)
-- [K230 U-Boot DesignWare SPI 驱动](../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)
-- [K230 Linux DesignWare SPI 核心](../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core.c)
-- [K230 Linux-specific SPI 扩展](../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core-k230.c)
-- [RT-Smart SPI 驱动](../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)
-- [当前 K230 SSI 模型](../../qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)
-- [当前 K230 SSI 头文件](../../qemu-camp-2026-k230/include/hw/ssi/k230_dw_ssi.h)
-- [当前 K230 machine 集成](../../qemu-camp-2026-k230/hw/riscv/k230.c)
-- [当前 HI_SYS 模型](../../qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
+- [K230 TRM 文本](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)
+- [K230 Linux DTS](../../../k230_sdk/src/little/linux/arch/riscv/boot/dts/kendryte/k230.dtsi)
+- [K230 U-Boot DesignWare SPI 驱动](../../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)
+- [K230 Linux DesignWare SPI 核心](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core.c)
+- [K230 Linux-specific SPI 扩展](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core-k230.c)
+- [RT-Smart SPI 驱动](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)
+- [当前 K230 SSI 模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)
+- [当前 K230 SSI 头文件](../../../my-qemu-camp-2026-k230/include/hw/ssi/k230_dw_ssi.h)
+- [当前 K230 machine 集成](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
+- [当前 HI_SYS 模型](../../../my-qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
 
 ## 11. 变更记录
 
@@ -230,3 +751,5 @@ K230 machine 负责：
 - 确认 K230 TRM、SDK、Linux/U-Boot 通用驱动的证据边界不同。
 - 建立 DWC 共性、综合参数、K230 集成和 K230 quirk 的分类标准。
 - 形成 v2 重构的初步边界和待决策问题。
+
+</details>

@@ -979,7 +979,7 @@ AXI 访问失败 -> 片选撤销 -> SSI 关闭 -> FIFO 清空 -> AXIE
 ```text
 TRM：
 /home/flamboy/qemu-camp-2026/K230_Technical_Reference_Manual_V0.3.1_20241118.pdf
-/home/flamboy/qemu-camp-2026/exper-note/k230/K230_Technical_Reference_Manual_V0.3.1_20241118.txt
+/home/flamboy/qemu-camp-2026/exper-note/k230/reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt
 
 QEMU 控制器：
 /home/flamboy/qemu-camp-2026/qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c

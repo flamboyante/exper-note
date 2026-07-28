@@ -1,4 +1,12 @@
-# K230 DW SSI 上游拆分分析
+# K230 DW SSI 上游拆分分析（已合并）
+
+> 本文内容已合并到 [K230 SPI/QSPI 上游 Review 与 v2 重构决策（合并版）](k230-spi-qspi-review-v2-decision-notes.md)。
+> 后续实施、讨论和 review 回复请以合并版为唯一依据。本文件仅保留历史分析，避免旧链接失效。
+
+<details>
+<summary>展开 2026-07-27 原始拆分分析</summary>
+
+# K230 DW SSI 上游拆分分析（历史原文）
 
 更新时间：2026-07-27
 
@@ -97,7 +105,7 @@ Bin Meng 让你做的就是同样的事：把 DW SSI 也做成这样的通用模
 | 资料 | 路径 | 角色 |
 |---|---|---|
 | K230 TRM | `K230_Technical_Reference_Manual_V0.3.1_20241118.txt` / `.pdf` | IP 实例化说明，含全部 `SSIC_*` 配置项 |
-| TRM 12.3 中文对照 | `exper-note/k230/k230-trm-12.3-spi-cn.md` | 逐位依据 |
+| TRM 12.3 中文对照 | `exper-note/k230/spi/reference/k230-trm-12.3-spi-cn.md` | 逐位依据 |
 | U-Boot 通用 driver | `build/k230-uboot-src/drivers/spi/designware_spi.c` | 上游 Denx driver，证明 IP 通用性 |
 | RT-Smart driver | `k230_sdk/.../drv_spi.c` | K230 SDK 对 IP 的实际调用序列 |
 | QEMU DW I2C 模型 | `iomux-v2/hw/i2c/designware_i2c.c` | 通用层组织方式的参考 |
@@ -209,6 +217,8 @@ Bin Meng 没强制要求加通用层 qtest，但加上会更稳，验收更顺�
 - 上游 review 邮件：Bin Meng，2026-07-27 12:45
 - 现有 series：`k230-spiv3.2` 分支，base `f893c46c3931b3684d235d221bf8b7844ddbf1d7`
 - patch 1 实现：`iomux-v2` 仓库 commit `b4144a08f2` "hw/ssi: Add K230 DesignWare SSI register model"
-- 寄存器审阅表：[k230-spi-qspi-register-audit.md](k230-spi-qspi-register-audit.md)
-- TRM 12.3 中文对照：[k230-trm-12.3-spi-cn.md](k230-trm-12.3-spi-cn.md)
-- Cover letter：[k230-spiv3.2-cover-letter.md](k230-spiv3.2-cover-letter.md)
+- 寄存器审阅表：[k230-spi-qspi-register-audit.md](../spi/k230-spi-qspi-register-audit.md)
+- TRM 12.3 中文对照：[k230-trm-12.3-spi-cn.md](../spi/reference/k230-trm-12.3-spi-cn.md)
+- Cover letter：[k230-spiv3.2-cover-letter.md](archive/v3.2/k230-spiv3.2-cover-letter.md)
+
+</details>
