@@ -456,20 +456,19 @@ DWC SSI Databook 和 K230 CoreConsultant 配置报告仍然是高价值资料，
 
 ## 13. 实施顺序与检查点
 
-推荐按以下顺序修改，避免一次性重写 1750 行模型：
+实施路线已细化到独立文档：[K230 SPI/QSPI V2 实施路线](k230-spi-qspi-v2-implementation-plan.md)。
 
-1. 重命名通用类型、文件和符号，保持行为不变；
-2. 删除 DWC SSI 对 `k230_hi_sys.h` 的依赖；
-3. 把 FIFO、ID/version、profile 和 capability 改为实例配置；
-4. 让 K230 machine 设置三个实例的 properties；
-5. 加 capability 寄存器和 IRQ 门控；
-6. 将 HI_SYS XIP enable 改成 GPIO 信号；
-7. 将 XIP region 改为可选、大小可配置的通用 region；
-8. 重组测试和 trace 命名；
-9. 逐 commit 编译、qtest、`git diff --check` 和 checkpatch；
-10. 最后重写 cover letter 和 v2 change log。
+核心原则：分刀推进，每一刀只做一类改动，保持中间态可编译可回归。不在 v3.4 顶部追加单一重构 patch，最终重组为 11 个自洽提交。
 
-每一步都应保持分支可编译，不能先移动代码、后续 patch 才修复中间提交。
+五步概要：
+
+1. 冻结 v3.4 基线（重新构建 + qtest + 记录）；
+2. 行为不变的通用化（重命名 + 依赖整理）；
+3. 解除 HI_SYS 反向依赖（GPIO + getter）；
+4. 引入实例配置（属性化）；
+5. 重组 v2 的 11 个提交。
+
+每步的检查点和注意点见实施路线文档。
 
 ## 14. Cover letter 与 review 回复要点
 
