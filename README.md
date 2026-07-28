@@ -6,6 +6,13 @@
 
 引用源码时优先用从 `exper-note/` 出发的相对路径。Agent 导航详见 [AGENTS.md](./AGENTS.md)。
 
+## 当前工作入口
+
+- [工作区状态页](./workspace-state.md) — 当前默认主题、下一步和主题切换入口。
+- [K230 SPI/QSPI V2 重构决策](./k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md) — V2 的唯一架构决策入口。
+
+新的 agent 先读上级工作区 `AGENTS.md`，再读状态页；状态页未指向的笔记只在任务需要时读取。
+
 ## 目录结构
 
 - `camp/`  训练营课程笔记(SoC 白皮书、QEMU 各主题 study、通用 MMIO 模板、assets)

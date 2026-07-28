@@ -4,7 +4,7 @@
 
 ## 项目导航
 
-`exper-note/` 是 QEMU 训练营 2026 的公共文档区，按主题分子目录：
+`exper-note/` 是 QEMU 训练营 2026 的公共文档区，按主题分子目录。进入本目录前先读取上级工作区的 `AGENTS.md` 与 [工作区状态页](./workspace-state.md)：状态页决定当前默认主题和最小阅读路径，本文件只提供稳定的文档地图。
 
 - `camp/`           训练营课程笔记(SoC 白皮书、QEMU 各主题 study、通用 MMIO 模板、assets)
 - `k230/`           K230 实战主项目
@@ -24,6 +24,8 @@
 
 | 任务 | 路径 |
 |---|---|
+| 工作区当前状态与主题切换 | workspace-state.md |
+| V2 架构决策（唯一入口） | k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md |
 | 当前最新 cover letter | k230/upstream-review/current/k230-spiv3.4-cover-letter.md |
 | 当前最新 commit messages | k230/upstream-review/current/k230-spiv3.4-commit-messages-bilingual.md |
 | 上游 review 决策 | k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md |
@@ -43,13 +45,12 @@
 
 ## 不变事实(无需重新发现)
 
-- 工作区根:`/home/flamboy/qemu-camp/`
-- K230 QEMU 仓库:`/home/flamboy/qemu-camp/my-qemu-camp-2026-k230/`
-  - origin: `git@github.com:flamboyante/my-qemu-camp-2026-k230.git`
-- K230 SDK:`/home/flamboy/qemu-camp/k230_sdk/`
-- exper-note 仓库:`/home/flamboy/qemu-camp/exper-note/`
+- 工作区根:`/home/flamboy/qemu-camp-2026/`
+- K230 QEMU 仓库:`/home/flamboy/qemu-camp-2026/qemu-camp-2026-k230/`
+- K230 SDK:`/home/flamboy/qemu-camp-2026/k230_sdk/`
+- exper-note 仓库:`/home/flamboy/qemu-camp-2026/exper-note/`
   - origin: `git@github.com:flamboyante/exper-note.git`
-- 当前主线分支:`k230-spiv3.4`(最新版本资料在 `upstream-review/current/`)
+- V1 当前代码分支:`k230-spiv3.4`；`upstream-review/current/` 的 v3.4 资料同属 V1。V2 是下一代大版本，阶段以 `workspace-state.md` 为准。
 - 文件名约定:`k230-主题-用途.md`，保留完整身份不简写
 - 发新版本时:`current/` 整体挪到 `archive/vX.Y/`，再放新版本进 `current/`
 
