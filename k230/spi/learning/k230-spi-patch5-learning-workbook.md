@@ -2,6 +2,10 @@
 
 更新时间：2026-07-17
 
+最终勘误：2026-07-29
+
+> 本文最初按当时 V1 实现记录了普通 enhanced 的 `mode` 阶段。后续对 K230 TRM 12.3/5.3 与 RT-Smart、U-Boot、Linux SDK 复核确认：`XIP_MODE_BITS` 只属于 XIP transaction，普通 enhanced/IDMA 不包含 mode 阶段。以下正文已按“instruction → address → dummy → data”修正；历史提交中的五阶段实现属于待在 V2 Step 4.0 修复的源码问题。
+
 当前状态：P5-1、P5-2、P5-3 已完成；Dual/Quad SDR PIO 的增强读取与增强
 写入均已接入。Patch 5 范围内的 reg 8、PIO 10、Standard Flash 7 和 QSPI 6
 共 31 项测试已通过。本文记录设计边界、实现分工和复习要点，不替代代码中的
@@ -20,7 +24,7 @@ Guest 写 DR 中的 instruction/address
         + CTRLR1.NDF
                     |
                     v
-instruction -> address -> mode -> dummy -> data
+instruction -> address -> dummy -> data
                     |
                     v
                同一 SSIBus/CS0/W25Q256
@@ -40,9 +44,9 @@ hw/ssi: Implement K230 enhanced QSPI transfers
 必须完成：
 
 - 支持 Dual/Quad SDR PIO 的增强读取和增强写入。
-- 实现 `instruction -> address -> mode -> dummy -> data` 五阶段。
-- 让 `SPI_FRF/TRANS_TYPE/INST_L/ADDR_L/XIP_MBL/XIP_MD_BIT_EN/
-  WAIT_CYCLES/TMOD/NDF` 真正参与事务。
+- 实现 `instruction -> address -> dummy -> data` 四阶段。
+- 让 `SPI_FRF/TRANS_TYPE/INST_L/ADDR_L/WAIT_CYCLES/TMOD/NDF`
+  真正参与普通 enhanced 事务。
 - 增强 `TMOD=RO` 在 DATA 阶段生成接收时钟并写 RX FIFO。
 - 增强 `TMOD=TO` 在 DATA 阶段消费 TX FIFO，并支持 Guest 分批填入 payload。
 - 使用 Patch 3 的 TX/RX FIFO、SER、BUSY、`remaining_frames` 和恢复入口。
@@ -285,9 +289,6 @@ k230_dw_ssi_prepare_enhanced_command()
 | `SPI_CTRLR0.TRANS_TYPE` | `trans_type` | TT0/TT1/TT2 |
 | `SPI_CTRLR0.INST_L` | `instruction_bits` | 0/4/8/16 |
 | `SPI_CTRLR0.ADDR_L` | `address_bits` | 字段值 × 4 |
-| `SPI_CTRLR0.XIP_MBL` | `mode_bits` | 2/4/8/16 |
-| `XIP_MODE_BITS` | `mode` | 低 16 位 |
-| `SPI_CTRLR0.XIP_MD_BIT_EN` | `mode_bits_enabled` | 是否存在 mode 阶段 |
 | `SPI_CTRLR0.WAIT_CYCLES` | `wait_cycles` | 原值保存 |
 | `CTRLR1.NDF` | `data_frames` | `NDF + 1` |
 
@@ -303,16 +304,13 @@ INST_L=0/1/2/3 -> 0/4/8/16 bit
 instruction_bits = inst_l ? (1U << (inst_l + 1)) : 0;
 ```
 
-`ADDR_L` 和 `XIP_MBL` 的编码是连续的，可以分别写成：
+`ADDR_L` 的编码是连续的，可以写成：
 
 ```c
 address_bits = addr_l << 2;
-mode_bits = 1U << (mode_length_encoding + 1);
 ```
 
-但 `mode_bits` 表示长度，不表示 mode 的值；descriptor 中的 `mode` 才是实际值。
-`mode_bits_enabled` 不能用 `mode == 0` 替代，因为“未启用”和“启用但值为 0”
-是两种不同情况。
+`XIP_MBL`、`XIP_MD_BIT_EN` 和 `XIP_MODE_BITS` 不进入普通 enhanced descriptor；它们只由 XIP window 的 command builder 解释。
 
 ### 3.2 原子消费 TX FIFO
 
@@ -395,7 +393,6 @@ CTRLR1.NDF=3
 ```text
 instruction_bits = 8
 address_bits     = 24
-mode_bits         = 8
 data_frames       = 4
 instruction 线宽  = 1 线
 address 线宽      = 4 线
@@ -404,7 +401,7 @@ data 线宽          = 4 线
 
 也就是 Quad 下的 `1-4-4` 事务。
 
-## 4. P5-3：五阶段执行器
+## 4. P5-3：四阶段执行器
 
 函数：
 
@@ -417,8 +414,7 @@ k230_dw_ssi_run_enhanced_transfer()
 | phase | 动作 | 下一个 phase |
 |---|---|---|
 | `INSTRUCTION` | 按 `instruction_bits` 大端发送 | `ADDRESS` |
-| `ADDRESS` | 按 `address_bits` 大端发送 | `MODE` |
-| `MODE` | 未启用则跳过，否则按 `mode_bits` 发送 `mode` | `DUMMY` |
+| `ADDRESS` | 按 `address_bits` 大端发送 | `DUMMY` |
 | `DUMMY` | 发送 `wait_cycles` 个事务级 dummy | `DATA` |
 | `DATA + RO` | 每次 dummy 获得一个 RX frame | 完成后 `IDLE` |
 | `DATA + TO` | 从 TX FIFO 消费一个 payload frame | 完成后 `IDLE` |
@@ -428,14 +424,14 @@ P5-3 需要复用前缀执行器，但不能直接复用 Standard 的 `TMOD=TO/R
 ```text
 Standard TO：每个 TX FIFO 项就是一个普通帧
 Standard RO：一个 dummy DR 后自动生成 NDF 个接收帧
-Enhanced：instruction -> address -> mode -> dummy -> data
+Enhanced：instruction -> address -> dummy -> data
 ```
 
 可以复用的是 FIFO、`phase`、`remaining_frames`、FIFO 满/空暂停和 DR 访问后的恢复
 这些状态管理机制；不能直接把完整 address 当成 Standard DFS 帧发送。
 
 可以新增一个很小的 helper，例如“按大端顺序发送一个 N-bit 值”，避免 instruction、
-address、mode 三处复制移位循环。这个抽象符合 DRY；不要把 FIFO、phase 或 RX push
+address 两处复制移位循环。这个抽象符合 DRY；不要把 FIFO、phase 或 RX push
 也塞入该 helper，否则职责会过大。
 
 ### 4.1 大端发送
@@ -448,11 +444,9 @@ address、mode 三处复制移位循环。这个抽象符合 DRY；不要把 FIF
 
 不是主机内存字节序，也不是 `0x56 -> 0x34 -> 0x12`。
 
-### 4.2 mode bits
+### 4.2 XIP mode bits 的边界
 
-`XIP_MD_BIT_EN=0` 时必须完全跳过 MODE 阶段。置 1 时，长度来自 `XIP_MBL`，
-内容来自 `XIP_MODE_BITS`。当前 `qspi/mode-bits-dummy` 使用 8-bit mode，避免把 QEMU 字节总线误装成
-位级总线；2/4-bit 值可右对齐后通过一次事务级字节发送表达。
+普通 enhanced PIO 和 IDMA 都忽略 `XIP_MD_BIT_EN`、`XIP_MBL` 和 `XIP_MODE_BITS`。真正的 XIP window 访问可以在地址阶段之后插入 mode bits，其长度和值分别来自上述字段和寄存器。两条路径可以复用发送字段的 helper，但不能复用“普通 enhanced 存在 mode phase”这一错误状态机。
 
 ### 4.3 dummy：硬件周期与 QEMU 字节接口
 
@@ -466,7 +460,7 @@ dummy cycles modeled with bytes writes instead of bits
 `ssi_transfer(..., 0)`：
 
 - Q01 `0x6b` 配置 `WAIT_CYCLES=8`，m25p80 收到 8 个 dummy 写入。
-- Q02 `0xeb` 先收到一个 mode byte，再按 `WAIT_CYCLES=4` 收到 4 个 dummy 写入。
+- Q02 `0xeb` 的普通 enhanced/IDMA 事务不从 `XIP_MODE_BITS` 取 mode byte；Flash 模型需要的 mode/dummy 字节统一由 `WAIT_CYCLES` 换算后的零值传输满足。XIP `0xeb` 才单独发送配置的 mode bits。
 
 这是 QEMU 外设接口的抽象适配，不代表真实 Quad 总线上每周期传输了一个字节。
 

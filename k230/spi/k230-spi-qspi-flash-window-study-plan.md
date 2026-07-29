@@ -38,7 +38,7 @@ K230 TRM + K230 SDK 有效代码/设备树
 - 256 项、每项最长 32 位的 TX/RX FIFO。
 - Standard SPI 的 TR、TO、RO、EEPROM_READ PIO。
 - spi0 CS0 的 W25Q256 MTD 后端。
-- Dual/Quad QSPI SDR PIO 的指令、地址、mode、dummy 和 RO/TO 数据阶段。
+- Dual/Quad QSPI SDR PIO 的指令、地址、dummy 和 RO/TO 数据阶段；mode bits 只属于 XIP transaction。
 - 九路独立中断及 PLIC 146–172 连线。
 - 独立 `HI_SYS.SSI_CTRL @ 0x91585068`。
 - 受 `ssi0_xip_en` 门控的 `0xC0000000–0xC7ffffff` XIP window。
@@ -485,7 +485,7 @@ hw/ssi: Add the K230 SPI flash XIP window
 - 只为 spi0 暴露 `0xC0000000–0xC7ffffff`。
 - `ssi0_xip_en=0` 时不返回 Flash 数据。
 - opcode 来自 `XIP_INCR_INST/XIP_WRAP_INST`。
-- 地址长度、mode bits 和 dummy 复用 Patch 5 的增强阶段生成器。
+- 地址长度和 dummy 可复用普通 enhanced 的字段发送/等待 helper；mode bits 由 XIP command builder 单独读取 `XIP_MODE_BITS`，不在普通 enhanced 状态机中增加 mode phase。
 - 支持 1/2/4/8 字节 little-endian MMIO read。
 - PIO 与 XIP 共享同一 Flash 和 CS，不保留陈旧事务。
 - XIP write 记录 guest error并忽略。
@@ -909,7 +909,7 @@ Data-OUT          -> TO          (TMOD=1)
 10-Patch 的既定支持边界：
 
 1. 实现 RO 及 NDF 自动接收。
-2. 实现 Octal/增强 instruction、address、mode、dummy 和 data 阶段。
+2. 实现 Octal/增强 instruction、address、dummy 和 data 阶段；若同时实现 XIP，再由 XIP 路径单独增加 optional mode。
 3. 实现 SDK 实际使用的内部 IDMA/AXI 寄存器和完成语义。
 4. 修正 FIFO 深度探测，并补齐 Linux 运行所需 IRQ 行为。
 

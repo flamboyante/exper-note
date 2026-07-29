@@ -2,7 +2,21 @@
 
 首次记录：2026-07-28
 
+修订：2026-07-29（同步 Step 4 最终计划与当前 V2 检查点）
+
 本文是 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 第 13 节的实施细化，不重复架构结论，只规定执行顺序、检查点和注意点。
+
+## 当前检查点（2026-07-29）
+
+| 项目 | 当前状态 |
+|---|---|
+| V2 开发分支 | `k230-V2-patch-spi` |
+| 当前 HEAD | `189638cdf4` |
+| Step 1 / Step 2 | 已完成并通过编译与 K230 SSI qtest |
+| Step 3 | 已完成 HI_SYS 反向依赖解耦；通用 SSI 使用 `xip-enable` GPIO input |
+| Step 4 Plan Final | [实例配置与 capability 最终实施计划](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 已完成；源码尚未实施 |
+
+下文第一步至第三步保留最初路线和历史检查点；执行 Step 4 时以专门计划中的配置矩阵、TDD 顺序和命令为准。
 
 ## 1. 前提核实
 
@@ -66,20 +80,33 @@
 
 ### 第四步：再引入实例配置
 
-行为边界稳定后，才把这些硬编码改成属性：
+行为边界稳定后，按 [Step 4 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 分五个小目标实施：
+
+1. Step 4.0 先修正现有 ordinary enhanced/IDMA 对 XIP mode fields 的错误消费，普通事务固定为 instruction → address → dummy → data；
+2. 建立集中 `DwSsiConfig`、完整 properties、配置校验、动态 FIFO、通用测试机，以及 `fifo-depth`/capability profile 两项迁移 equality；
+3. 在 K230 machine 中应用 QSPI0、QSPI1、SPI-OPI/FMC 三实例完整 profile；
+4. 按 enhanced SPI → IDMA → XIP 的顺序逐项接入 capability 关闭语义；
+5. 完成构建、通用/K230 qtest、公共头文件、迁移边界和未来 patch 归属检查。
+
+最终 property 集合为：
 
 - `fifo-depth`
 - `num-cs`
 - `max-lines`
+- `component-id`
+- `version-id`
+- `imr-reset`
+- `axiawlen-reset`
+- `axiarlen-reset`
+- `spi-ctrlr0-reset`
 - `has-enhanced-spi`
 - `has-idma`
 - `has-xip`
-- `component-id`
-- `version-id`
-- `spi-ctrlr0-reset`
 - `xip-window-size`
 
-每加一组属性，都要重新构建和跑 qtest。
+三项 capability 全部纳入 Step 4，但每项形成独立、可验证的小改动。`has-xip=false` 最终不创建第二个 sysbus MMIO region；K230 仅为 FMC profile 映射 128 MiB XIP window。
+
+XIP 寄存器边界按 TRM 最终裁决：`XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 均为 FMC XIP 专用寄存器，QSPI profile 下 RAZ/WI。TXU 属于基础 TX FIFO underflow IRQ，不随 `has-idma` 关闭；IDMA capability 只控制 DONE、AXIE。
 
 ### 第五步：最后重组 v2 的 11 个提交
 
@@ -128,18 +155,19 @@ if (logical_index == 0) {
 
 ### 3.4 第四步属性化的顺序
 
-建议按"风险从低到高"加，每加一组就跑 qtest：
+执行顺序已经在 Step 4 最终计划中收敛，不再按单个 property 零散提交：
 
-1. `component-id` / `version-id` / `spi-ctrlr0-reset`（纯复位值，最安全）
-2. `fifo-depth`（影响 FIFO 行为，但 qtest 应该不依赖具体深度）
-3. `num-cs`（影响 SER 位宽，需核对 5/5/1）
-4. `max-lines`（影响 SPI_FRF 校验）
-5. `has-enhanced-spi` / `has-idma` / `has-xip`（capability 门控，影响寄存器可见性，风险最高）
-6. `xip-window-size`（影响 region 大小，但只有 `has-xip=true` 时才生效）
+1. Step 4.0 先解除普通 enhanced/IDMA 与 XIP 的错误耦合，并增加 `0xeb` 四阶段回归；
+2. Step 4.1 一次建立完整 property 契约、校验、动态 FIFO、兼容默认值和最小迁移 equality，但 capability 暂不改变寄存器可见性；
+3. Step 4.2 应用 K230 三实例 profile，先证明同一通用类型可表达 QSPI 与 FMC 差异；
+4. Step 4.3 依次门控 `has-enhanced-spi`、`has-idma`、`has-xip`，每项都有独立负路径和 K230 正路径回归；
+5. Step 4.4 执行完整构建、qtest、公共头文件、依赖残留和 patch 归属检查。
+
+XIP 资源条件创建必须留到 `has-xip` 小目标；Step 4.1/4.2 不提前改变第二个 sysbus region 的创建时机。
 
 ### 3.5 分支命名
 
-`k230-spiv3.4` 是 V1 当前开发分支，V2 是下一代重构。第二步开始不应直接在 v3.4 上改，否则 v3.4 基线被污染。应从 `k230-spiv3.4` 拉一个新分支（如 `k230-spiv4.0` 或 `k230-v2`），具体命名需用户确认。
+`k230-spiv3.4` 仍是 V1 基线；V2 当前工作位于已存在的 `k230-V2-patch-spi` 分支。未经用户明确要求，不创建新分支、不提交、不推送。Step 4 计划只描述未来源码改动和验证，不改变当前分支状态。
 
 ## 4. 每步检查点
 
@@ -148,7 +176,7 @@ if (logical_index == 0) {
 | 第一步 | `ninja` 成功；qtest 全过；`git diff --check` 无报错；记录 commit hash 和测试输出 |
 | 第二步 | `ninja` 成功；qtest 结果与基线一致；`grep -r k230_dw_ssi hw/ssi/ include/hw/ssi/` 无残留（测试文件名除外）；`grep -r K230DwSsiState` 无残留 |
 | 第三步 | `ninja` 成功；qtest 结果与基线一致；`grep 'k230_hi_sys.h' hw/ssi/` 无结果；`grep 'K230HiSysState' include/hw/ssi/` 无结果；XIP 相关 qtest 场景仍通过 |
-| 第四步 | 每组属性加完后 `ninja` 成功；qtest 结果与基线一致；三实例 properties 值与 TRM/当前代码核对一致 |
+| 第四步 | 先完成 Step 4.0 数据路径纠错，再完成 Step 4.1 配置骨架、Step 4.2 三实例 profile，最后按 enhanced SPI → IDMA → XIP 逐项门控；每个小目标均有定向 qtest 和完整回归；三实例 properties 值与 TRM/SDK/当前代码核对一致 |
 | 第五步 | 每个 patch 单独 checkout 后 `ninja` 成功；`git diff --check` 和 `checkpatch` 无报错；qtest 全过；cover letter 更新 |
 
 ## 6. 验证命令合集
@@ -171,6 +199,7 @@ build/qemu-system-riscv64 --version | head -1
 ninja -C build qemu-system-riscv64
 
 # 编译 qtest 二进制
+ninja -C build tests/qtest/dw-ssi-test
 ninja -C build tests/qtest/k230-dw-ssi-test
 ninja -C build tests/qtest/k230-wdt-test
 
@@ -182,6 +211,9 @@ ninja -C build
 ### 6.3 qtest 运行
 
 ```bash
+# 运行通用 DW SSI qtest
+QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/dw-ssi-test -v
+
 # 直接运行 K230 SSI qtest（带详细输出）
 QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/k230-dw-ssi-test -v
 
@@ -192,8 +224,8 @@ QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/k230-wdt-test -v
 build/tests/qtest/k230-dw-ssi-test -l
 QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/k230-dw-ssi-test -p "/TEST_PATH" -v
 
-# 通过 meson 运行全部 K230 qtest
-meson test -C build k230-dw-ssi-test k230-wdt-test -v
+# 通过 meson 运行 Step 4 相关 qtest
+meson test -C build dw-ssi-test k230-dw-ssi-test k230-wdt-test -v
 
 # 运行全部 riscv64 qtest
 meson test -C build --suite qtest-riscv64-softmmu -v
@@ -240,12 +272,13 @@ grep -rn k230_hi_sys hw/ssi/ include/hw/ssi/ 2>/dev/null
 
 ```bash
 ninja -C build qemu-system-riscv64
+ninja -C build tests/qtest/dw-ssi-test
 QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/k230-dw-ssi-test -v
 
 # 确认属性在 machine 中正确设置
-grep -A2 fifo-depth hw/riscv/k230.c
-grep -A2 num-cs hw/riscv/k230.c
-grep -A2 max-lines hw/riscv/k230.c
+rg -n 'fifo-depth|num-cs|max-lines|component-id|version-id|imr-reset' hw/riscv/k230.c
+rg -n 'axiawlen-reset|axiarlen-reset|spi-ctrlr0-reset' hw/riscv/k230.c
+rg -n 'has-enhanced-spi|has-idma|has-xip|xip-window-size' hw/riscv/k230.c
 ```
 
 ### 6.8 单 commit 验证（第五步重组时）

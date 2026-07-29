@@ -3,11 +3,13 @@
 首次记录：2026-07-29
 修订：2026-07-29（v2，Review 后拆分 4A/4B，修正 capability 门控为字段级 mask）
 
+> **历史方案：禁止作为实施依据。** 本文已由 [Step 4 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 取代。文中“SDK 的 IDMA 1-4-4 路径复用 `XIP_MODE_BITS`”判断已被 TRM 与 RT-Smart/U-Boot/Linux SDK 源码复核推翻：普通 enhanced/IDMA 不读取 XIP mode fields；`XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 均按 XIP capability 门控。本文的 `dma-mode` 枚举和字段级 mask 方案也不再采用。
+
 本文是 [V2 实施路线](k230-spi-qspi-v2-implementation-plan.md) 第四步"引入实例配置"的执行细化。所有文件路径与行号基于实际代码探索（第三步已完成，分支 `k230-spiv3.4`），代码仓库位于 `my-qemu-camp-2026-k230/`。
 
 > **命名约定**：第二步重命名已完成（`dw_ssi.*`、`DwSsiState`），第三步 GPIO 解耦已完成。本文基于解耦后的代码状态。
 
-> **v2 修订说明**：Review 指出第三步文档存在以下问题：(1) XIP_MODE_BITS 被 IDMA 1-4-4 路径使用，不能由 has-xip 隐藏；(2) SPI_CTRLR0 等寄存器含混合 capability 字段，不能整个寄存器 RAZ/WI；(3) IDMA 寄存器/IRQ 清单不完整。本版拆分为 4A（安全参数化）和 4B（字段级 capability 门控），并修正所有事实性错误。
+> **当时的 v2 修订说明（已失效）**：以下章节保留当时推演过程，不代表最终事实。最终裁决见 Plan Final。
 
 ---
 
@@ -79,7 +81,7 @@ s->regs[R_SPI_CTRLR0] = s->max_lines == 8 ?         // 二选一
 - DMA：SPI_DM_EN
 - Clock stretching：CLK_STRETCH_EN
 
-**XIP_MODE_BITS**（dw_ssi.c:948-953）被 IDMA 1-4-4 路径使用：
+**已确认的源码缺陷**：当时 `dw_ssi.c:948-953` 错误地让 IDMA 1-4-4 路径读取 `XIP_MODE_BITS`：
 ```c
 /* The SDK's 1-4-4 read supplies its mode byte through XIP_MODE_BITS
  * without XIP_MD_BIT_EN */
@@ -307,7 +309,7 @@ if (s->xip_window_size > 0) {
 }
 ```
 
-**注意**：Step 4A 不隐藏任何 XIP 寄存器。XIP_MODE_BITS 等寄存器对三个实例仍可读写——因为 QSPI0/1 的 IDMA 1-4-4 路径依赖 XIP_MODE_BITS（dw_ssi.c:949）。寄存器可见性门控属于 4B。
+**历史说明**：这一结论已被 Plan Final 推翻。正确顺序是先在 Step 4.0 删除 IDMA 对 `XIP_MODE_BITS` 的错误依赖，再由 `has-xip` 统一门控三个 XIP 专用寄存器；QSPI profile 对它们 RAZ/WI。
 
 **文件：`hw/riscv/k230.c`** — machine 设置：
 
@@ -563,7 +565,7 @@ for (int i = 0; i < ARRAY_SIZE(s->dw_ssi); i++) {
 必须区分三类 XIP 相关寄存器：
 1. **纯 XIP 寄存器**：XIP_CTRL、XIP_SER、XRXOICR、XIP_CNT_TIME_OUT、XIP_INCR_INST、XIP_WRAP_INST、XIP_WRITE_INCR_INST、XIP_WRITE_WRAP_INST、XIP_WRITE_CTRL——这些**可以**整个寄存器 RAZ/WI
 2. **共享寄存器中的 XIP 字段**：SPI_CTRLR0（XIP_INST_EN、XIP_MBL、XIP_PREFETCH_EN 等）、IMR/ISR/RISR（XRXOIM 等）——这些需要字段级 mask
-3. **名为 XIP 但非 XIP-only 的寄存器**：XIP_MODE_BITS——被 IDMA 1-4-4 路径使用（dw_ssi.c:949），**不能**由 has-xip 隐藏
+3. **历史误判**：曾把 `XIP_MODE_BITS` 当作 IDMA 共享寄存器；最终证据确认它与 `XIP_INCR_INST/XIP_WRAP_INST` 一样属于 XIP-only，应由 `has-xip` 隐藏
 
 #### 代码改动
 
@@ -601,7 +603,7 @@ static bool dw_ssi_is_xip_only_reg(hwaddr addr)
         return false;
     }
 }
-/* 注意：A_XIP_MODE_BITS 不在此列表——它被 IDMA 共享 */
+/* Plan Final：A_XIP_MODE_BITS 也在 XIP-only 列表 */
 ```
 
 混合寄存器中的 XIP 字段 mask（追加到 4B-1 的 SPI_CTRLR0 mask 中）：
@@ -692,7 +694,7 @@ capability 默认 `false`/`none`。只有 machine 显式设置才启用。复位
 
 ### 3. 字段级 mask 而非寄存器级隐藏
 
-共享寄存器（SPI_CTRLR0、CTRLR0、IMR/ISR/RISR、XIP_MODE_BITS）不能整个寄存器 RAZ/WI。必须按字段控制 writable/read mask。
+共享寄存器只有 `SPI_CTRLR0`、`CTRLR0`、`IMR/ISR/RISR`；`XIP_MODE_BITS` 不是共享寄存器，QSPI profile 下整个寄存器 RAZ/WI。
 
 ### 4. 属性设置时机
 
@@ -714,7 +716,7 @@ FIFO 创建和 XIP region 创建从 `instance_init` 移到 `realize`。
 4. **FIFO 创建移到 realize**：`fifo32_create()` 从 instance_init 移到 realize，因需要读 `fifo_depth` 属性。
 5. **fifo-depth 校验**：范围 8..256。TXFTLR/RXFTLR 阈值写入校验（阈值 < fifo_depth）。
 6. **VMState**：properties 属于不可变设备配置，由目标端 machine 在加载迁移状态前设置；迁移要求源端与目标端配置一致。`fifo_depth` 影响 FIFO VMState buffer 长度，建议用 `VMSTATE_UINT32_EQUAL()` 检查一致性。
-7. **XIP_MODE_BITS 不被 has-xip 隐藏**：该寄存器被 IDMA 1-4-4 路径使用，寄存器名带 "XIP" 不代表只服务 XIP。
+7. **XIP_MODE_BITS 由 has-xip 隐藏**：普通 enhanced/IDMA 不读取它，只有真正 XIP transaction 使用。
 8. **SPI_CTRLR0 的 DDR/RXDS 字段**暂不门控（K230 三实例都使用），后续可追加 capability。
 9. **dma-mode 枚举**：当前 `external` 未实现（行为等同 `none`），但接口已预留。commit message 说明接口语义。
 10. **通用默认值**：所有属性默认值为中性值（0/false/none）。K230 machine 必须显式设置全部 K230 值。commit message 注明值来源。
@@ -797,7 +799,7 @@ scripts/checkpatch.pl -f hw/riscv/k230.c
 4. **寄存器/字段 capability 矩阵**：先建表（实施前），列出每个寄存器字段归属于 enhanced/DMA/XIP/shared
 5. **has-enhanced-spi**：新增 bool 属性，默认 false；`dw_ssi_ctrlr0_writable_mask()`/`dw_ssi_spi_ctrlr0_writable_mask()` 字段级 mask；传输分发门控
 6. **dma-mode 枚举**：新增 `DwSsiDmaMode` 枚举（none/external/internal）；`dw_ssi_is_idma_reg()` 完整寄存器清单（含 AXIECR/DONECR）；IMR/ISR/RISR 字段 mask；`dw_ssi_irq_valid_mask()`；SR.CMPLTD_DF 清零；IRQ 输出低电平
-7. **has-xip**：新增 bool 属性，默认 false；`dw_ssi_is_xip_only_reg()` 纯 XIP 寄存器列表（**不含 XIP_MODE_BITS**）；SPI_CTRLR0/IMR 中 XIP 字段追加到 mask；XIP engine 行为门控
+7. **has-xip**：新增 bool 属性，默认 false；`dw_ssi_is_xip_only_reg()` 包含 `XIP_MODE_BITS/XIP_INCR_INST/XIP_WRAP_INST`；XIP engine 行为门控
 
 每组完成后编译 + qtest 回归。
 

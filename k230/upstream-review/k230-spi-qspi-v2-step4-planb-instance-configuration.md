@@ -2,7 +2,9 @@
 
 首次记录：2026-07-29
 
-适用开发分支：`my-qemu-camp-2026-k230/k230-V2-patch-spi`
+> **历史方案：禁止作为实施依据。** 本文已由 [Step 4 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 取代。Plan B 关于“三实例均 `has-xip=true`”“`XIP_MODE_BITS` 被 enhanced/IDMA 共享”的结论不成立；QEMU profile 最终为 QSPI0/QSPI1 `has-xip=false`、FMC `has-xip=true`。本文的全量迁移 equality 和流程检查装置也不再采用。
+
+适用开发分支：`qemu-camp-2026-k230/k230-V2-patch-spi`
 
 代码基线：`b7702892e2`（在 `1342f13a6e` 的 v3.4 功能基线上完成通用命名和 HI_SYS GPIO 解耦）
 
@@ -304,7 +306,7 @@ xip-window-size != 0  -> 创建第二个 sysbus MMIO region
 xip-enable GPIO       -> 运行时控制已经存在的窗口是否响应
 ```
 
-寄存器可见性不由 aperture 大小决定。尤其不能因为 QSPI0/QSPI1 没有地址窗口，就隐藏 `XIP_MODE_BITS`；当前 SDK 的 1-4-4 IDMA 路径会复用该寄存器提供 mode byte。K230 当前建议三个实例均 `has-xip=true`，仅 SPI-OPI/FMC 配置非零 aperture。
+该段结论已失效。最终证据确认 `XIP_MODE_BITS/XIP_INCR_INST/XIP_WRAP_INST` 只在 FMC 5.3 XIP 寄存器表中定义，普通 enhanced/IDMA 不读取它们。K230 最终 profile 为 QSPI0/QSPI1 `has-xip=false`、SPI-OPI/FMC `has-xip=true`。
 
 ### 6.3 `has-idma` 的有限语义
 
@@ -523,9 +525,9 @@ if (s->cfg.xip_window_size != 0) {
 
 #### 寄存器策略
 
-本阶段不因 `xip-window-size == 0` 改变控制器寄存器可见性：
+Plan Final 的寄存器策略为：
 
-- `XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 保持当前 profile 的读写语义；
+- QSPI profile 的 `XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` RAZ/WI；FMC/XIP profile 保持读写语义；
 - concurrent XIP 相关寄存器继续按当前证据 RAZ/WI；
 - `SPI_CTRLR0` 的 XIP/enhanced/IDMA 共享字段保持当前 mask；
 - 不增加按名字分类的 `dw_ssi_is_xip_reg()`。
@@ -705,7 +707,7 @@ reset、post-load 和 GPIO handler 也必须遵循同一 capability 状态，不
 - 使能后读取 Flash；
 - 再关闭后返回 0；
 - system reset 后窗口恢复禁用；
-- QSPI 实例的 `XIP_MODE_BITS` 仍可读写，防止未来错误按 aperture 隐藏共享寄存器。
+- QSPI 实例的三个 XIP 专用寄存器 RAZ/WI；FMC XIP 正路径单独验证。
 
 ### 9.3 Capability false-path
 
@@ -798,12 +800,12 @@ git diff --check
 - QSPI0/QSPI1 `xip-window-size=0`；
 - SPI-OPI 为 128 MiB；
 - 只有 SPI-OPI 注册和映射 sysbus MMIO index 1；
-- `XIP_MODE_BITS` 不因无 aperture 被隐藏；
+- QSPI profile 的 XIP 专用寄存器 RAZ/WI；FMC profile 保持 XIP 正路径；
 - XIP GPIO enable/disable/reset 行为正确。
 
 ### B5 migration 后
 
-- 全部 immutable 配置（含 capability bitmask）使用 equality；
+- 仅 `fifo-depth` 和 capability profile 使用 equality；
 - equality 位于动态 FIFO/寄存器/phase 之前；
 - post-load 不恢复与 capability 冲突的状态；
 - system reset 使用目标 profile，但迁移已保证两端 profile 一致。
@@ -880,7 +882,7 @@ Plan B 完成时应满足：
 - `has-enhanced-spi`、`has-idma`、`has-xip` 全部完成字段/行为/IRQ 门控；
 - K230 的 PIO、enhanced SPI、IDMA、HI_SYS 和 XIP 行为不回归；
 - capability=false 分支全部可执行并有断言；
-- 没有错误隐藏 `XIP_MODE_BITS` 等共享寄存器；
+- XIP 专用寄存器只在 FMC/XIP profile 中可见；
 - reset 和 migration 不允许 capability/configuration 不一致；
 - standard-only、enhanced-pio、enhanced-idma、full-xip profile 均完成验证；
 - external DMA 等范围外能力仍明确未实现；
@@ -896,11 +898,11 @@ Plan B 完成时应满足：
 - [Step 4 Plan A](k230-spi-qspi-v2-step4-plana-instance-configuration.md)
 - [寄存器审阅表](../spi/k230-spi-qspi-register-audit.md)
 - [TRM 12.3 中文证据](../spi/reference/k230-trm-12.3-spi-cn.md)
-- [当前 DWC SSI 模型](../../../my-qemu-camp-2026-k230/hw/ssi/dw_ssi.c)
-- [当前 K230 machine](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
-- [当前 K230 DWC SSI qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)
-- [QEMU DesignWare I2C 参考](../../../my-qemu-camp-2026-k230/hw/i2c/designware_i2c.c)
-- [QEMU DesignWare I3C 参考](../../../my-qemu-camp-2026-k230/hw/i3c/dw-i3c.c)
+- [当前 DWC SSI 模型](../../../qemu-camp-2026-k230/hw/ssi/dw_ssi.c)
+- [当前 K230 machine](../../../qemu-camp-2026-k230/hw/riscv/k230.c)
+- [当前 K230 DWC SSI qtest](../../../qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)
+- [QEMU DesignWare I2C 参考](../../../qemu-camp-2026-k230/hw/i2c/designware_i2c.c)
+- [QEMU DesignWare I3C 参考](../../../qemu-camp-2026-k230/hw/i3c/dw-i3c.c)
 - [K230 Linux DTS](../../../k230_sdk/src/little/linux/arch/riscv/boot/dts/kendryte/k230.dtsi)
 - [K230 U-Boot DTS](../../../k230_sdk/src/little/uboot/arch/riscv/dts/k230.dtsi)
 - [K230 U-Boot DWC SSI 驱动](../../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)
@@ -999,18 +1001,17 @@ K230 machine 必须显式设置真实 profile，不能依赖通用默认值。
 
 | 物理实例 | enhanced | internal DMA | XIP engine | XIP aperture |
 |---|---:|---:|---:|---:|
-| QSPI0 | true | true | true | 0 |
-| QSPI1 | true | true | true | 0 |
+| QSPI0 | true | true | false | 0 |
+| QSPI1 | true | true | false | 0 |
 | SPI-OPI/FMC | true | true | true | 128 MiB |
 
-QSPI0/QSPI1 的 XIP engine 与 SoC aperture 必须分开：
+QSPI0/QSPI1 的最终裁决：
 
-- QSPI reset 和 SDK 使用证明共享/XIP 格式字段可见；
-- 没有证据表明 K230 把两个 QSPI 的 XIP master interface 映射进系统地址空间；
-- 因而它们可以 `has-xip=true`，同时 `xip-window-size=0`。
+- `SPI_CTRLR0` 作为 enhanced 综合寄存器继续可见，其 reset 中的 XIP 命名字段不等于实例具备 XIP engine；
+- 12.3 QSPI 寄存器表没有 `0x0fc/0x100/0x104`，也没有 XIP aperture；
+- 因而两个 QSPI 必须 `has-xip=false`、`xip-window-size=0`。
 
-如果后续硬件证据证明 QSPI 不具备完整 XIP command engine，只修改 capability
-配置和专属字段矩阵，不能再把 `XIP_MODE_BITS` 之类的共享字段整体隐藏。
+`XIP_MODE_BITS` 不是共享字段；普通 enhanced/IDMA 只使用 `WAIT_CYCLES` 表达等待阶段。
 
 ---
 
@@ -1039,7 +1040,6 @@ QSPI0/QSPI1 的 XIP engine 与 SoC aperture 必须分开：
 
 - `CTRLR0`；
 - `SPI_CTRLR0`；
-- `XIP_MODE_BITS`；
 - `DMACR`；
 - `IMR/ISR/RISR`；
 - `SR`。
@@ -1077,7 +1077,7 @@ DWC SSI 的不同综合布局会复用相邻甚至相同偏移。
 - `CTRLR0.SPI_FRF` RAZ/WI；
 - `max-lines` 只允许 1；
 - `SPI_CTRLR0` 中仅由 enhanced/XIP 使用的字段按 capability matrix 处理；
-- `XIP_MODE_BITS` 只有在其他已启用能力确实共享时才保留，否则 RAZ/WI；
+- `XIP_MODE_BITS` 不属于 ordinary enhanced；由 `has-xip` 整体门控；
 - `SPI_CTRLR1` 继续按当前“未实现”策略处理。
 
 不能把整个 `CTRLR0` 或 `SPI_CTRLR0` 按地址隐藏。
@@ -1138,7 +1138,6 @@ DMA 的 `DMATDLR/DMARDLR`。未来支持 external DMA 时必须引入明确 DMA 
 
 ```text
 has-xip=false, window=0     -> 无 XIP engine，无 aperture
-has-xip=true,  window=0     -> 有 XIP command engine，无 SoC aperture
 has-xip=true,  window>0     -> 有 engine，并注册第二个 MMIO region
 has-xip=false, window>0     -> realize 失败
 ```
@@ -1151,8 +1150,8 @@ has-xip=false, window>0     -> realize 失败
 |---|---:|---:|---:|---|
 | `SPI_CTRLR0.TRANS_TYPE/ADDR_L/INST_L/WAIT_CYCLES` | ✓ | ✓ | ✓ | 按其他能力保留 |
 | `SPI_CTRLR0.XIP_INST_EN/XIP_DFS_HC/XIP_PREFETCH_EN` |  |  | ✓ | RAZ/WI |
-| `SPI_CTRLR0.XIP_MD_BIT_EN/XIP_MBL` | ✓ | ✓ | ✓ | 有共享消费者时保留 |
-| `XIP_MODE_BITS` | ✓ | ✓ | ✓ | 有 enhanced/IDMA 时保留 |
+| `SPI_CTRLR0.XIP_MD_BIT_EN/XIP_MBL` |  |  | ✓ | 寄存器值可见但普通 enhanced/IDMA 不消费 |
+| `XIP_MODE_BITS` |  |  | ✓ | RAZ/WI |
 | `XIP_INCR_INST/XIP_WRAP_INST` |  |  | ✓ | RAZ/WI |
 | concurrent-XIP/XIP-write 寄存器 |  |  | 未实现 | 始终按当前 RAZ/WI |
 
@@ -1162,11 +1161,10 @@ has-xip=false, window>0     -> realize 失败
 #### 16.7.3 行为
 
 - `has-xip=false` 时不创建 aperture，GPIO 输入无 XIP 副作用；
-- `has-xip=true` 且 window=0 时，XIP 寄存器仍按 engine 能力读写；
 - window 非零时才注册 sysbus MMIO index 1；
 - aperture read 同时要求 `has-xip`、非零 window 和运行时 `xip_enabled`；
 - 关闭/复位后 aperture 返回 0，不得意外启动 SPI transaction；
-- `XIP_MODE_BITS` 不能因 window=0 被隐藏，避免破坏 SDK 的 1-4-4 IDMA 路径。
+- 普通 enhanced/IDMA 不读取 `XIP_MODE_BITS`；FMC XIP transaction 才读取该寄存器。
 
 ---
 
@@ -1304,7 +1302,7 @@ Step 4 必须提供可执行 false-profile。
 
 - 三个 capability property 都实际控制寄存器、行为和 IRQ；
 - 没有按整个混合寄存器粗粒度隐藏字段；
-- `XIP_MODE_BITS` 等共享字段不会因 aperture=0 被错误隐藏；
+- XIP 专用寄存器只在 `has-xip=true` 的 FMC profile 中可见；
 - capability=false 不产生隐藏的数据搬运、状态变化或 IRQ；
 - reset 和 migration 不允许恢复与 capability 冲突的状态；
 - K230 machine 显式设置真实 profile；

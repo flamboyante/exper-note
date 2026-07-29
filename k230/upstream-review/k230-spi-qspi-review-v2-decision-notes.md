@@ -46,6 +46,19 @@ K230 machine
 
 只有在后续逐项审阅中发现无法通过 property、capability、GPIO、QOM link 或通用查询接口表达的 K230 控制器语义时，才增加薄 wrapper。
 
+### 1.1 Step 4 Plan Final 裁决
+
+Step 4 的唯一执行入口是 [实例配置与 capability 门控 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md)。Plan A、Plan B、Plan C 及其 planning handoff 只保留为历史推演材料。
+
+TRM 与 SDK 复核后，最终边界如下：
+
+- QSPI 12.3 寄存器表从 `0x0f8 DDR_DRIVE_EDGE` 直接跳到 `0x118 SPI_CTRLR1`，不包含 `XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST`；三者只在 FMC 5.3 XIP 寄存器表中定义；
+- RT-Smart 公共寄存器结构体包含三个成员，只能证明最大布局和偏移占位；RT-Smart、U-Boot、Linux 的普通 enhanced/IDMA 路径均没有写 `XIP_MODE_BITS`；
+- 当前 `dw_ssi_decode_enhanced_command()`、普通 enhanced mode phase，以及 IDMA 1-4-4 特判错误地消费 XIP fields。Step 4.0 必须先把普通事务恢复为 instruction → address → dummy → data；真正 XIP transaction 才允许插入 mode；
+- K230 profile 保持 QSPI0/QSPI1 `has-xip=false`、SPI-OPI/FMC `has-xip=true`。无 XIP capability 时三个 XIP 寄存器及扩展 XIP 寄存器均 RAZ/WI，不创建第二个 MMIO region；
+- TXU 是 TX FIFO underflow，不属于 IDMA capability。`has-idma=false` 只使 DONE、AXIE 无效，TXU 仍属于基础 IRQ；
+- 迁移只对 `fifo-depth` 和内部 capability profile 做 equality。post-load 对与 capability 冲突的动态状态返回错误，不用 sanitize 静默掩盖不一致。
+
 ## 2. Review 要求与重构目标
 
 Bin Meng 要求把当前 K230 SSI 模型拆分为：
@@ -499,10 +512,10 @@ v2 cover letter 应直接说明：
 - [K230 Linux DesignWare SPI 核心](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core.c)
 - [K230 Linux-specific SPI 扩展](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core-k230.c)
 - [RT-Smart SPI 驱动](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)
-- [当前 K230 SSI 模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)
-- [当前 K230 SSI 头文件](../../../my-qemu-camp-2026-k230/include/hw/ssi/k230_dw_ssi.h)
-- [当前 K230 machine 集成](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
-- [当前 HI_SYS 模型](../../../my-qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
+- [当前通用 DW SSI 模型](../../../qemu-camp-2026-k230/hw/ssi/dw_ssi.c)
+- [当前通用 DW SSI 头文件](../../../qemu-camp-2026-k230/include/hw/ssi/dw_ssi.h)
+- [当前 K230 machine 集成](../../../qemu-camp-2026-k230/hw/riscv/k230.c)
+- [当前 HI_SYS 模型](../../../qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
 - [当前 v3.4 cover letter](current/k230-spiv3.4-cover-letter.md)
 
 ## 16. 合并版变更记录
@@ -737,10 +750,10 @@ K230 machine 负责：
 - [K230 Linux DesignWare SPI 核心](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core.c)
 - [K230 Linux-specific SPI 扩展](../../../k230_sdk/src/little/linux/drivers/spi/spi-dw-core-k230.c)
 - [RT-Smart SPI 驱动](../../../k230_sdk/src/big/rt-smart/kernel/bsp/maix3/board/interdrv/spi/drv_spi.c)
-- [当前 K230 SSI 模型](../../../my-qemu-camp-2026-k230/hw/ssi/k230_dw_ssi.c)
-- [当前 K230 SSI 头文件](../../../my-qemu-camp-2026-k230/include/hw/ssi/k230_dw_ssi.h)
-- [当前 K230 machine 集成](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
-- [当前 HI_SYS 模型](../../../my-qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
+- [当前通用 DW SSI 模型](../../../qemu-camp-2026-k230/hw/ssi/dw_ssi.c)
+- [当前通用 DW SSI 头文件](../../../qemu-camp-2026-k230/include/hw/ssi/dw_ssi.h)
+- [当前 K230 machine 集成](../../../qemu-camp-2026-k230/hw/riscv/k230.c)
+- [当前 HI_SYS 模型](../../../qemu-camp-2026-k230/hw/misc/k230_hi_sys.c)
 
 ## 11. 变更记录
 
