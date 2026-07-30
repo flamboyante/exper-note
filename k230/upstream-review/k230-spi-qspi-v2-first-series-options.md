@@ -1,12 +1,12 @@
-# K230 V2 第一阶段上游 Series 范围与待决策项
+# K230 V2 第一阶段上游 Series 最终方案
 
 首次记录：2026-07-30
 
 最近更新：2026-07-30
 
-文档状态：基础方向已确定，等待项目 owner 选择剩余实现策略
+文档状态：最终选择已完成，全部采用 A 方案
 
-本文用于确定 K230 SPI/QSPI V2 第一批上游 patch series 的最终边界。原先的“三个候选方案”已经根据后续讨论收敛：不再比较“最小 PIO”“PIO + IRQ”“完整寄存器目录 + PIO/IRQ”三个互斥方案，而是先固定一条共同基线，再只保留仍有实际取舍的决策项。
+本文记录 K230 SPI/QSPI V2 第一批上游 patch series 的最终边界。原先的“三个候选方案”和后续 A/B 选项已经完成收敛，废除的方案不再作为实施入口。
 
 本文不替代 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 和 [Step 4 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md)。完成本文选择后，再据此更新 Step 4 实施顺序和最终 patch series。
 
@@ -40,7 +40,17 @@ V2 第一批的裁剪线按“通用 DW SSI IP 基线”划分，而不是按“
 - `has-idma`；
 - `has-xip`。
 
-三项 capability 的通用默认值均为 `false`。第一批可以配置和验证这些 capability，但不会因为结构中存在 capability 就提前加入对应运行时状态。
+三项 capability 的通用默认值均为 `false`。第一批虽然保留 property 和内部 capability 位图，但**任何 capability=true 的配置都必须在 realize 阶段直接拒绝**，不能允许一个宣称具有 enhanced/IDMA/XIP 能力、实际却没有对应数据路径的实例启动。错误信息统一明确为该能力已预留、将在后续 series 支持，例如：
+
+```text
+has-enhanced-spi is reserved for a follow-up series
+has-idma is reserved for a follow-up series
+has-xip is reserved for a follow-up series
+```
+
+后续功能 series 在实现数据路径和正路径测试的同一个 patch 中删除对应拒绝逻辑。这样 capability 从“不可启用”变成“可启用”的 diff 是局部且可 review 的。
+
+这里存在一个上游 review 风险：只能设置为 `false` 的 public property 可能被认为是提前暴露接口。如果 reviewer 要求严格 YAGNI，备选做法是第一批仅保留内部全零 capability 位图，把 public property 随对应功能 series 加入；但不能把 `true` 配置静默接受为无功能实例。
 
 `max-lines` 表示实例的物理线数能力，不依赖 `has-enhanced-spi`：
 
@@ -49,6 +59,20 @@ V2 第一批的裁剪线按“通用 DW SSI IP 基线”划分，而不是按“
 - SPI-OPI：保留 `max-lines = 8`；
 - `has-enhanced-spi = false` 时，`max-lines > 1` 仍然允许 realize；
 - capability 关闭时，guest 选择非 Standard `SPI_FRF` 不得进入 enhanced 数据路径。
+
+第一批 K230 profile 固定为：
+
+| 配置项 | QSPI0 | QSPI1 | SPI-OPI/FMC |
+|---|---:|---:|---:|
+| `max-lines` | 4 | 4 | 8 |
+| `dma-register-layout` | `internal-axi` | `internal-axi` | `internal-axi` |
+| `has-enhanced-spi` | `false` | `false` | `false` |
+| `has-idma` | `false` | `false` | `false` |
+| `has-xip` | `false` | `false` | `false` |
+| `xip-window-size` | `0` | `0` | `0` |
+| XIP region | 不创建/不映射 | 不创建/不映射 | 不创建/不映射 |
+
+因此第一批不会把 `0xc0000000` 映射为 SSI XIP aperture。`spi-ctrlr0-reset` 和 `max-lines` 仍按实例 profile 保留，它们描述硬件配置和 reset 契约，不表示扩展引擎已经开放。
 
 ### 2.2 Standard SPI 功能
 
@@ -120,6 +144,16 @@ K230 machine 只负责：
 - 三实例 MMIO、IRQ 和状态隔离；
 - 基础迁移状态只包含已实现的 PIO/IRQ 状态。
 
+迁移配置至少加入以下 equality guard，并放在依赖状态之前：
+
+```c
+VMSTATE_UINT32_EQUAL(cfg.fifo_depth, DwSsiState),
+VMSTATE_UINT32_EQUAL(cfg.capabilities, DwSsiState),
+VMSTATE_UINT32_EQUAL(cfg.dma_register_layout, DwSsiState),
+```
+
+`fifo-depth` 决定 FIFO 状态解释；capability 决定功能边界；`dma-register-layout` 决定 `0x050/0x054` 以及相关 DMA 配置寄存器的含义。三者任何一项不一致都不能按同一迁移状态解释。
+
 ## 3. 已确定后置或废除的第一批内容
 
 以下内容不再作为 V2 第一批候选：
@@ -147,8 +181,8 @@ K230 machine 只负责：
 |---|---|
 | Standard PIO/IRQ | 实现 reset、write mask、动态 readback 和副作用 |
 | IDR/VERSION/公共只读寄存器 | 按 profile 返回只读值 |
-| external/internal DMA 配置寄存器 | 根据第 5.2 节选择，仅提供寄存器兼容性，不产生 DMA 行为 |
-| `SPI_CTRLR0` | 根据第 5.3 节选择 reset/readback 和写入门控 |
+| external/internal DMA 配置寄存器 | 由 `dma-register-layout` 决定存在性和地址解释；仅提供寄存器兼容性，不产生 DMA 行为 |
+| `SPI_CTRLR0` | 保留 offset 和 profile reset；扩展字段写入不产生行为，`SPI_FRF` 非零写入忽略或清零 |
 | enhanced/IDMA/XIP 专用寄存器 | 定义 offset/field；capability 关闭时 RAZ/WI |
 | DONE/AXIE 等扩展 IRQ | 根据第 5.4 节选择是否提前保留物理输出，第一批不产生事件 |
 
@@ -160,18 +194,15 @@ K230 machine 只负责：
 - 已产生 DONE/AXIE；
 - 已完成对应的数据通路。
 
-## 5. 等待项目 owner 选择的决策项
+## 5. 最终选择
 
-每个决策项只选择一个选项。可以直接回复类似：`5.1-A，5.2-A，5.3-A，5.4-A，5.5-B，5.6-A`。
+项目 owner 最终确认全部采用 A 选项：`5.1-A，5.2-A，5.3-A，5.4-A，5.5-A，5.6-A`。
 
 ### 5.1 寄存器建模方式
 
-- [ ] **5.1-A（推荐）：继续使用 `REG32/FIELD` + 集中 read/write helper。** 保留完整 offset/field 目录，用少量辅助函数统一 reset、mask 和 RAZ/WI；不在第一批引入完整 `RegisterAccessInfo` 重构。预计代码量较小，接近现有模型，reviewer 更容易对照 V1。
-- [ ] **5.1-B：采用 DW I2C 风格 `RegisterAccessInfo`。** 使用 descriptor table、unsupported callback 和 `register_init_block32()` 管理寄存器。长期结构更集中，但第一批会额外增加一次寄存器框架 review。
+- [x] **5.1-A：继续使用 `REG32/FIELD` + 集中 read/write helper。** 保留完整 offset/field 目录，用少量辅助函数统一 reset、mask、layout 和 RAZ/WI；第一批不引入完整 `RegisterAccessInfo` 重构。
 
-选择影响：5.1-B 预计比 5.1-A 增加约 200～400 行结构代码和测试调整，也可能通过删除大 switch 抵消一部分增量。
-
-### 5.2 `0x050/0x054` DMA 寄存器布局
+### 5.2 `0x050/0x054` DMA 寄存器布局（已确定）
 
 K230 的 `SSIC_HAS_DMA = 2` 使用：
 
@@ -189,39 +220,42 @@ K230 的 `SSIC_HAS_DMA = 2` 使用：
 
 二者是互斥布局，不能在同一个 profile 中同时出现。
 
-- [ ] **5.2-A（推荐）：第一批增加显式 DMA register-layout 配置。** 定义 `none/external/internal-axi` 布局；external 和 internal-axi 均只实现寄存器存储，不产生 DMA 行为；K230 三实例选择 `internal-axi`。优点是通用 IP 边界最清楚，代价是增加 profile、字段 mask 和 false-path 测试。
-- [ ] **5.2-B：第一批只实现 K230 的 internal-axi 布局。** `0x050/0x054` 只按 `AXIAWLEN/AXIARLEN` 解释，external DMA layout 后续在有第二个用户时加入。代码最小，符合 YAGNI，但第一批的“通用标准 DW SSI”范围需要在 cover letter 中限定为 K230 已综合配置。
-- [ ] **5.2-C：第一批让 `0x050/0x054` 全部 RAZ/WI。** 不保存 `AXIAWLEN/AXIARLEN`，等 IDMA series 再实现。最小，但弱化 K230 profile 的寄存器完整性，也不能覆盖 SDK 对这两个寄存器的访问。
+- [x] **5.2-A：增加显式 `dma-register-layout` 配置。** 定义 `none/external/internal-axi` 布局。layout 决定寄存器版图：
+
+- `none`：DMA 配置寄存器不存在，相关地址 RAZ/WI；
+- `external`：`0x050/0x054` 按 `DMATDLR/DMARDLR` 解释；
+- `internal-axi`：`0x050/0x054` 按 `AXIAWLEN/AXIARLEN` 解释，K230 三实例使用此布局。
+
+layout 还决定 `DMACR` 字段视图以及 `SPIDR/SPIAR/AXIAR0/1` 等 internal-AXI 配置寄存器是否存在。`has-idma` 不参与寄存器存在性判断，只控制 internal DMA 引擎触发、guest memory 访问和 DONE/AXIE 事件。
 
 无论选择哪一项，第一批都不实现 DMA request、DMA engine 或 guest memory 搬运。
 
-### 5.3 `SPI_CTRLR0` 的第一批行为
+### 5.3 `SPI_CTRLR0` 的第一批行为（已确定）
 
 K230 已知实例 reset 存在差异：普通 SPI/QSPI 为 `0x04000200`，FMC/OPI 为 `0x28000200`。
 
-- [ ] **5.3-A（推荐）：保留 offset 和 profile reset，扩展写入受 capability 门控。** guest 可以读到实例 reset 差异；`has-enhanced-spi = false` 时，写入 enhanced/DDR/XIP 字段不产生行为，并按定义忽略或清零不可写字段。
-- [ ] **5.3-B：`has-enhanced-spi = false` 时整个寄存器 RAZ/WI。** 行为最简单，但三个 profile 的 `spi-ctrlr0-reset` 在第一批失去可见意义，后续启用 enhanced 时需要改变 guest-visible readback。
+- [x] **5.3-A：保留 offset 和 profile reset。** guest 可以读到 `0x04000200` 与 `0x28000200` 的实例差异。`has-enhanced-spi=false` 时：
 
-5.3-A 更符合“保留实例差异、后置数据通路”的原则。
+- `CTRLR0.SPI_FRF` 非零写入忽略或清零，读回保持 Standard；
+- `SPI_CTRLR0` 的扩展写入不进入 enhanced/DDR/XIP 数据路径；
+- 不把整个 `SPI_CTRLR0` 机械归入 absent capability 后 RAZ/WI；
+- `DDR_DRIVE_EDGE` 等纯扩展寄存器仍可 RAZ/WI。
 
 ### 5.4 DONE/AXIE 物理 IRQ 输出
 
-- [ ] **5.4-A（推荐）：第一批保留全部 9 路 IRQ 输出。** 七路基础 IRQ 正常工作；DONE/AXIE 输出恒低，IMR/ISR/RISR 对应位无效；K230 PLIC 路由一次固定下来，IDMA series 只增加事件产生逻辑。
-- [ ] **5.4-B：第一批只暴露七路基础 IRQ。** device interface 更精确，IDMA series 再增加 DONE/AXIE 输出并修改 K230 PLIC 路由。第一批更小，但后续会改变 sysbus IRQ 拓扑。
+- [x] **5.4-A：第一批保留全部 9 路 IRQ 输出。** 七路基础 IRQ 正常工作；DONE/AXIE 输出恒低，IMR/ISR/RISR 对应位无效；K230 PLIC 路由一次固定下来，IDMA series 只增加事件产生逻辑。
 
 XRXO/SPITE 不在第一批暴露独立物理输出，其寄存器状态位保持无效。
 
 ### 5.5 K230 Standard SPI Flash 挂接
 
-- [ ] **5.5-A：第一批包含 Flash 挂接。** 保留 `spi-flash` machine property，挂接 M25P80 compatible device，只验证 Standard 1-1-1 PIO 访问；不宣称 Dual/Quad、IDMA 或 XIP 启动。优点是提供真实设备集成证明，代价是增加 machine property 和 Flash 测试 review。
-- [ ] **5.5-B（推荐）：第一批不包含 Flash 挂接。** 使用通用 SSI test device 验证 PIO，在后续 enhanced series 或独立 K230 Flash integration series 中加入 NOR。第一批边界最集中，但缺少真实 NOR 使用场景。
+- [x] **5.5-A：第一批包含 Flash 挂接。** 保留 `spi-flash` machine property，挂接 M25P80-compatible device，只验证 Standard 1-1-1 PIO 访问；不宣称 Dual/Quad、IDMA 或 XIP 启动。
 
-如果选择 5.5-A，Flash 挂接应作为独立 patch，不能混入通用 DW SSI 模型 patch。
+Flash 挂接作为独立 patch，不能混入通用 DW SSI 模型 patch。
 
 ### 5.6 Patch series 拆分粒度
 
-- [ ] **5.6-A（推荐）：6 个功能 patch。** 每个 patch 职责更单一，测试跟随首次实现该行为的 patch。
-- [ ] **5.6-B：5 个功能 patch。** 合并一部分 K230 集成或测试 patch，series 更短，但单个 patch 更大。
+- [x] **5.6-A：6 个功能 patch。** 每个 patch 职责更单一，测试跟随首次实现该行为的 patch。
 
 推荐的 6-patch 结构：
 
@@ -230,42 +264,42 @@ XRXO/SPITE 不在第一批暴露独立物理输出，其寄存器状态位保持
 3. `hw/ssi: Add DesignWare SSI standard interrupt support`
 4. `hw/riscv/k230: Instantiate DesignWare SSI controllers`
 5. `hw/riscv/k230: Route SSI interrupts to the PLIC`
-6. 根据 5.5 的选择，加入 Standard Flash integration，或把通用/K230 qtest 独立整理为最后一个 patch。
+6. `hw/riscv/k230: Attach a standard SPI flash to the K230 SSI`，加入 Standard 1-1-1 Flash integration 测试。
 
 测试不得全部堆到最后一个 patch：Patch 1～5 必须各自带上首次覆盖对应行为的测试；第 6 个测试 patch 只允许补充跨模块集成场景。
 
 ## 6. 不同选择对应的预计规模
 
-| 组合 | 预计新增代码 | 特点 |
+以下估算**包含通用/K230 qtest、测试 machine 和 Meson 注册**，不包含 cover letter。按测试跟随功能 patch 的拆分方式，测试代码预计占总新增行数的 30%～40%。
+
+| 最终组合 | 预计新增代码（含 qtest） | 特点 |
 |---|---:|---|
-| 5.1-A + 5.2-B + 5.4-B + 5.5-B | 1500～1800 行 | 最小的标准 IP 基线 |
-| 5.1-A + 5.2-A + 5.4-A + 5.5-B | 1700～2100 行 | 通用边界和后续稳定性较平衡 |
-| 5.1-B + 5.2-A + 5.4-A + 5.5-A | 2000～2500 行 | 寄存器框架、DMA layout 和真实 Flash 集成最完整 |
+| 全部 A | 1850～2250 行 | REG32/helper、显式 DMA layout、9 路 IRQ、Standard Flash、6 patches |
 
-这些数字不包含 cover letter。无论选择哪种组合，第一批都应明显小于 V1 的三千余行完整功能 series。
+该估算仍应明显小于 V1 的三千余行完整功能 series。
 
-## 7. 当前推荐组合
-
-如果优先考虑“让 reviewer 能确认通用边界，同时控制第一批体积”，当前推荐：
+## 7. 最终组合摘要
 
 ```text
 5.1-A  REG32/FIELD + 集中 helper
 5.2-A  显式 DMA register-layout
 5.3-A  保留 SPI_CTRLR0 profile reset
 5.4-A  保留 9 路 IRQ，DONE/AXIE 恒低
-5.5-B  第一批不挂接 Flash
+5.5-A  第一批挂接 Standard 1-1-1 Flash
 5.6-A  拆成 6 个功能 patch
 ```
 
-这套组合预计约 1700～2100 行。它提供完整的标准 DW SSI 配置和寄存器边界、PIO/IRQ 闭环以及 K230 三实例证明，但不会把 enhanced、IDMA、XIP 数据路径带回第一批。
+最终组合预计约 1850～2250 行（含 qtest）。它提供完整的标准 DW SSI 配置和寄存器边界、PIO/IRQ 闭环、K230 三实例证明以及真实 Standard Flash consumer，但不会把 enhanced、IDMA、XIP 数据路径带回第一批。
 
 ## 8. Cover letter 必须主动说明的边界
 
 无论最终选择哪组方案，cover letter 都应明确说明：
 
-> This series introduces a configurable DesignWare SSI model covering the standard PIO and interrupt baseline used by the K230 SSI instances. Enhanced SPI transfers, the internal DMA engine, and the XIP aperture are represented by disabled capability boundaries and will be added in follow-up series. Registers belonging to disabled capabilities are either read-as-zero/write-ignored or expose only profile-defined reset values; they do not provide the corresponding data-path functionality.
+> This series introduces a configurable DesignWare SSI model covering the standard PIO and interrupt baseline used by the K230 SSI instances. Enhanced SPI transfers, the internal DMA engine, and the XIP aperture are reserved for follow-up series; attempts to enable those capabilities are rejected at realize time in this version. Register layout is selected independently from engine capabilities, so layout-visible DMA configuration registers may provide storage/readback without triggering DMA requests, guest-memory accesses, or DONE/AXIE events.
 
 还应单独说明 `0x050/0x054` 是随综合配置变化的互斥 DMA register layout，避免 reviewer 把 K230 的 `AXIAWLEN/AXIARLEN` 和普通 external DMA 的 `DMATDLR/DMARDLR` 当成同一实例应同时存在的寄存器。
+
+后续 IDMA series 必须继承 Step 4.0 已确认的隔离约束：普通 enhanced/IDMA 的 1-4-4 路径只执行 instruction → address → dummy → data，不读取 `XIP_MODE_BITS`。`XIP_MODE_BITS` 继续属于 XIP 专用组，不得因为 IDMA 加入而改成 shared 寄存器；IDMA series 应保留 SDK 风格 `0xeb` 回归，防止旧的 mode-byte 特判重新出现。
 
 ---
 

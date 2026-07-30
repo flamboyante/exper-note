@@ -1,8 +1,8 @@
-# K230 V2 第四步 Plan Final：实例配置与 capability 门控
+# K230 V2 第四步 Plan Final V1.1：实例配置与第一批 capability 边界
 
 首次记录：2026-07-29
 
-最终修订：2026-07-30（记录 Step 4.0 完成状态，并明确第一批上游 series 只覆盖 Standard SPI PIO、基础 IRQ 和 K230 集成）
+最终修订：2026-07-30（修正 `max-lines`/capability 冲突，分离 DMA register layout 与 IDMA engine，并收敛第一批 capability 语义）
 
 适用代码检查点：`qemu-camp-2026-k230/` 分支 `k230-V2-patch-spi`，commit `c689ac865f`
 
@@ -10,23 +10,23 @@
 
 本文是 [V2 实施路线](k230-spi-qspi-v2-implementation-plan.md) 第四步“引入实例配置”的唯一执行计划。Plan A、Plan B、Plan C 及其 planning handoff 只保留为历史推演材料，不再作为实施入口。架构边界以 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 为准：保留单一通用 `TYPE_DW_SSI` / `DwSsiState`，K230 machine 通过 properties 配置三个实例，不增加 `TYPE_K230_DW_SSI` wrapper。
 
-> **上游投稿边界说明（2026-07-30）**：本文描述的是完整 Step 4 的本地实施终态，不等于第一批上游 patch series 必须携带全部 capability。第一批 series 计划只提交通用 DW SSI 的 Standard SPI PIO、基础 IRQ，以及 K230 三实例和 PLIC 集成；enhanced SPI、SPI NOR、IDMA、HI_SYS 和 XIP 分批后送。详细边界见第 15 节。
+> **上游投稿边界说明（2026-07-30）**：V1.1 直接以第一批上游 series 为实施终态。第一批只提交通用 DW SSI 的标准寄存器版图、Standard SPI PIO、基础 IRQ、DMA 配置寄存器兼容性，以及 K230 三实例和 PLIC 集成；enhanced SPI、SPI NOR、IDMA engine、HI_SYS 和 XIP 分批后送。三项 capability property 在第一批只能为 `false`，任何 `true` 配置均在 realize 阶段明确拒绝。
 
 ---
 
 ## 摘要
 
-Step 4 先修正当前模型把普通 enhanced/IDMA 事务错误连接到 XIP mode bits 的问题，再将 K230 固定参数改为 realize 前确定的实例配置，并把 `has-enhanced-spi`、`has-idma`、`has-xip` 三项 capability 逐项接入寄存器、IRQ、数据路径和资源生命周期。
+Step 4 先修正当前模型把普通 enhanced/IDMA 事务错误连接到 XIP mode bits 的问题，再将 K230 固定参数改为 realize 前确定的实例配置。第一批把寄存器版图与功能 capability 分开：`dma-register-layout` 决定 DMA 寄存器存在性和地址解释，`has-idma` 只决定 engine、guest memory 访问和 DONE/AXIE 事件；三项功能 capability 暂不开放。
 
 实施分为五个可独立验证的小目标：
 
 1. Step 4.0：普通 enhanced/IDMA 只执行 instruction → address → dummy → data，XIP mode 只留在真正的 XIP transaction；
 2. Step 4.1：建立 `DwSsiConfig`、完整 properties、配置校验、动态 FIFO 和最小迁移一致性检查；
 3. Step 4.2：在 K230 machine 中显式应用 QSPI0、QSPI1、SPI-OPI/FMC 三个 profile，消除 reset 值和 XIP region 的 K230 硬编码推断；
-4. Step 4.3：按 enhanced SPI → IDMA → XIP 的顺序接入 capability 关闭语义，每项先写负路径测试，再实现最小门控；
+4. Step 4.3：实现第一批 capability 保留契约：`false` 对应无数据路径，任何 `true` 在 realize 阶段拒绝；
 5. Step 4.4：完成通用模型、K230 集成、公共头文件、迁移状态和未来 patch 归属检查。
 
-本步不实现新的 DDR、RXDS、Octal、XIP write 或 external DMA 行为。`max-lines=8` 描述 FMC 的实例线宽上限，不改变当前模型只执行 Standard/Dual/Quad SDR、显式拒绝 Octal/DDR/RXDS 的功能边界。
+本步不实现 enhanced、DDR、RXDS、Octal、XIP、internal DMA engine 或 external DMA request 行为。`max-lines=4/4/8` 只描述三个实例的物理线宽上限；第一批数据路径只执行 Standard single-line SPI。
 
 ---
 
@@ -60,12 +60,12 @@ CodeGraph 首先定位了 `k230_soc_realize()` 的实例配置、realize、IRQ �
 | H5 | `hw/ssi/dw_ssi.c:33-34` | 仅按 SPI/FMC 固定两个 `SPI_CTRLR0` reset | 改为 `spi-ctrlr0-reset` |
 | H6 | `hw/ssi/dw_ssi.c:425-430` | `SR.TFNF/RFF` 与 256 比较 | 改为 `cfg.fifo_depth` |
 | H7 | 原 `hw/ssi/dw_ssi.c:537-584`、`949-955`、`1021-1043` | 普通 enhanced/IDMA 曾错误读取 `XIP_MODE_BITS`，PIO 曾包含 XIP mode phase | Step 4.0 已完成：普通事务只保留 instruction/address/dummy/data |
-| H8 | `hw/ssi/dw_ssi.c:813-984` | IDMA 寄存器和入口始终存在 | `has-idma` 关闭时 RAZ/WI、无搬运，仅 DONE/AXIE 无效；TXU 保持基础 FIFO IRQ |
-| H9 | `hw/ssi/dw_ssi.c:1201-1535` | read/write switch 无 capability 分组 | 增加统一寄存器存在性辅助函数 |
+| H8 | `hw/ssi/dw_ssi.c:813-984` | DMA 寄存器存在性和 IDMA engine 被同一逻辑隐式绑定 | 增加 `dma-register-layout` 决定版图；`has-idma` 只门控 engine、guest memory 和 DONE/AXIE；TXU 保持基础 FIFO IRQ |
+| H9 | `hw/ssi/dw_ssi.c:1201-1535` | read/write switch 无 layout/capability 分层 | 增加独立的寄存器 layout 辅助函数和运行时 engine capability 判断 |
 | H10 | `hw/ssi/dw_ssi.c:1578-1585` | reset 使用 K230 值，并用 `max_lines == 8` 推断 FMC | 全部从 `cfg` 读取，删除推断 |
 | H11 | `hw/ssi/dw_ssi.c:1677-1689` | 所有实例创建 XIP region 和 256 深度 FIFO | 移到 `realize()`，按 property 创建 |
 | H12 | `hw/riscv/k230.c:246-251` | machine 只设置 CS 和线宽 | 为三个实例显式设置完整 profile |
-| H13 | `hw/riscv/k230.c:293-294` | 无条件映射 `dw_ssi[2]` region 1 | 仅对 `has-xip=true` 的 FMC profile 映射 |
+| H13 | `hw/riscv/k230.c:293-294` | 无条件映射 `dw_ssi[2]` region 1 | 第一批删除 region 1 映射；随 XIP series 恢复 capability-controlled 映射 |
 | H14 | `tests/qtest/k230-dw-ssi-test.c:492-528` | 三实例只验证 `SPI_CTRLR0`/SER，IDR/VERSION/IMR 只抽查 spi0 | 扩充为三实例完整 reset profile |
 
 ### 1.3 当前资源生命周期
@@ -133,39 +133,40 @@ Step 4 后应改为：固定接口在 `instance_init` 注册，依赖 property �
 | `axiawlen-reset` | `0x00000700` | `0x00000700` | `0x00000000` |
 | `axiarlen-reset` | `0x00000700` | `0x00000700` | `0x00000000` |
 | `spi-ctrlr0-reset` | `0x04000200` | `0x04000200` | `0x28000200` |
-| `has-enhanced-spi` | `true` | `true` | `true` |
-| `has-idma` | `true` | `true` | `true` |
-| `has-xip` | `false` | `false` | `true` |
-| `xip-window-size` | `0` | `0` | `0x08000000` |
+| `dma-register-layout` | `internal-axi` | `internal-axi` | `internal-axi` |
+| `has-enhanced-spi` | `false` | `false` | `false` |
+| `has-idma` | `false` | `false` | `false` |
+| `has-xip` | `false` | `false` | `false` |
+| `xip-window-size` | `0` | `0` | `0` |
 | 控制器 MMIO | `0x91582000` | `0x91583000` | `0x91584000` |
-| XIP MMIO | 不创建/不映射 | 不创建/不映射 | `0xc0000000`，128 MiB |
+| XIP MMIO | 不创建/不映射 | 不创建/不映射 | 不创建/不映射 |
 
-`has-xip=false` 不等于 QSPI 的共享 `SPI_CTRLR0` 中所有名字含 XIP 的位都必须读零。QSPI 的 TRM reset `0x04000200` 本身包含 `XIP_MBL` 编码；Step 4 应保留整个共享 `SPI_CTRLR0` 的实例 reset，`has-xip` 只门控专用 XIP 寄存器组、XIP 数据路径和第二个 MMIO region。
+三实例 capability 全部为 `false`，因此第一批不创建第二个 MMIO region，也不映射 `0xc0000000`。这不等于共享 `SPI_CTRLR0` 必须整体读零：QSPI reset `0x04000200` 和 FMC reset `0x28000200` 仍作为 profile 契约可见；第一批只阻止扩展字段进入 enhanced/DDR/XIP 数据路径。
 
 ### 2.4 QEMU 主线组织先例
 
 | 主线代码 | 可借鉴点 | 本计划用法 |
 |---|---|---|
 | `include/hw/i3c/dw-i3c.h` | 状态内集中 `cfg` 结构 | `DwSsiState` 内增加 `DwSsiConfig cfg` |
-| `hw/i3c/dw-i3c.c:1806-1824` | 在 `realize()` 按 property 创建 FIFO/MMIO | 动态创建 SSI FIFO 和可选 XIP region |
+| `hw/i3c/dw-i3c.c:1806-1824` | 在 `realize()` 按 property 创建 FIFO/MMIO | 第一批动态创建 SSI FIFO；可选 XIP region 留给后续 series |
 | `hw/i3c/dw-i3c.c:1782-1803` | reset 从 `cfg` 填充寄存器字段 | DW SSI reset 从实例 profile 读取 |
 | `hw/i3c/dw-i3c.c:1854-1872` | properties 直接写入 `cfg` | 使用 kebab-case QOM properties |
-| `hw/ssi/xilinx_spips.c:1372-1388` | 控制器在 realize 中增加线性 Flash region | `has-xip=true` 时提供第二个 sysbus region |
-| `hw/arm/xlnx-zynqmp.c:881-885` | SoC 负责映射控制器 region 与 LQSPI region | K230 只把 FMC region 1 映射到 `0xc0000000` |
+| `hw/ssi/xilinx_spips.c:1372-1388` | 控制器在 realize 中增加线性 Flash region | 留作后续 `has-xip=true` 资源实现参考 |
+| `hw/arm/xlnx-zynqmp.c:881-885` | SoC 负责映射控制器 region 与 LQSPI region | 留作后续 XIP series 中 K230 映射 `0xc0000000` 的参考 |
 | `hw/ssi/xilinx_spips.c:1397-1401` | 非法配置通过 `error_setg()` 拒绝 realize | 集中校验 property 范围与组合 |
 
-本计划不把 XIP window 改成 K230 alias，也不新增 wrapper。V2 已决策为“通用模型实现 XIP SPI transaction 和 MMIO 访问语义，SoC 决定窗口大小与地址”；Step 4 只把现有固定 region 改为 capability 控制的可选 region。
+本计划不新增 wrapper。第一批删除现有固定 XIP region；后续 XIP series 再按“通用模型实现 transaction/region、SoC 决定窗口大小与地址”的边界恢复可选 region。
 
 ### 2.5 已确认决策与实施假设
 
 | 项目 | 结论 |
 |---|---|
 | 配置组织 | 使用单一 `DwSsiConfig` 和 kebab-case QOM properties；不增加 K230 wrapper |
-| 默认值 | Step 4.1 默认值只保持当前 V2 中间态行为；Step 4.2 后 K230 显式设置全部字段 |
-| capability 顺序 | enhanced SPI → IDMA → XIP；每项独立写负路径、实现和回归 |
+| 默认值 | 通用 capability 默认全 `false`，`dma-register-layout` 默认 `none`；K230 显式选择 `internal-axi` 和全部实例 reset |
+| capability 顺序 | 第一批 `true` 全部拒绝；后续按 enhanced SPI → IDMA → XIP 分 series 开放，每项与正路径实现和测试同 patch 落地 |
 | 负路径载体 | 使用独立 `dw-ssi-test` machine，不向 K230 产品 machine 增加测试入口 |
-| XIP 归属 | 通用模型实现 XIP transaction 和可选 region；K230 只决定 profile、地址映射与 Flash 连接 |
-| IRQ / VMState | IRQ 输出数量和 VMState schema 固定；TXU 属于基础 FIFO IRQ，IDMA 只增加 DONE/AXIE；迁移仅对 FIFO 深度和 capability profile 做 equality |
+| XIP 归属 | 第一批只保留 `has-xip=false,xip-window-size=0`；XIP transaction、GPIO 和可选 region 全部随 XIP series 后送 |
+| IRQ / VMState | TXU 属于基础 FIFO IRQ，DONE/AXIE 第一批不产生；迁移对 FIFO 深度、capability profile 和 DMA register layout 做 equality |
 | Octal 边界 | `max-lines=8` 只表达 FMC 线宽上限，本步不实现 Octal/DDR/RXDS 数据路径 |
 | 代码检查点 | Step 4.0 完成状态基于 `k230-V2-patch-spi` 的 `c689ac865f`；后续行号、QOM child 名称和默认行为若随 HEAD 变化，先重新定位，不直接套用旧行号 |
 
@@ -194,10 +195,27 @@ typedef struct DwSsiConfig {
     uint32_t axiarlen_reset;
     uint32_t spi_ctrlr0_reset;
 
+    uint32_t dma_register_layout;
     uint32_t capabilities;
     uint64_t xip_window_size;
 } DwSsiConfig;
 ```
+
+DMA 寄存器版图使用独立枚举，不能复用 `has-idma`：
+
+```c
+typedef enum DwSsiDmaRegisterLayout {
+    DW_SSI_DMA_LAYOUT_NONE,
+    DW_SSI_DMA_LAYOUT_EXTERNAL,
+    DW_SSI_DMA_LAYOUT_INTERNAL_AXI,
+} DwSsiDmaRegisterLayout;
+```
+
+- `NONE`：DMA 配置寄存器不存在，相关 offset RAZ/WI；
+- `EXTERNAL`：`0x050/0x054` 解释为 `DMATDLR/DMARDLR`；
+- `INTERNAL_AXI`：`0x050/0x054` 解释为 `AXIAWLEN/AXIARLEN`，并暴露 K230 internal-AXI 配置寄存器。
+
+layout 只决定寄存器存在性、字段 mask 和 readback；capability 只决定功能行为。第一批即使 `has-idma=false`，`INTERNAL_AXI` 布局下的配置寄存器仍可按 mask 保存和读回，但绝不触发 DMA engine。
 
 三个 public property 仍是独立 bool，内部用一个 `uint32_t` 保存，便于集中判断和迁移 equality，不对外暴露 capability bitmask property：
 
@@ -221,7 +239,6 @@ struct DwSsiState {
     SysBusDevice parent_obj;
 
     MemoryRegion mmio;
-    MemoryRegion xip;
     SSIBus *spi;
 
     qemu_irq *cs_lines;
@@ -234,18 +251,15 @@ struct DwSsiState {
     DwSsiConfig cfg;
 
     uint32_t irq_latched;
-    uint32_t idma_completed_frames;
     uint32_t phase;
     uint32_t remaining_frames;
-    DwSsiEnhancedCommand enhanced;
 
     int active_cs;
     bool sleep_status;
-    bool xip_enabled;
 };
 ```
 
-properties 只表达不可变硬件配置。`SSIENR`、`SER`、`xip_enabled`、FIFO level、phase、IRQ latch 等 guest 运行时状态不得做成 property。
+properties 只表达不可变硬件配置。`SSIENR`、`SER`、FIFO level、Standard PIO phase、IRQ latch 等 guest 运行时状态不得做成 property。enhanced command、IDMA 和 XIP 运行时字段不在第一批结构体中预留。
 
 ### 3.2 property 集合与兼容默认值
 
@@ -264,24 +278,28 @@ static const Property dw_ssi_properties[] = {
     DEFINE_PROP_UINT32("imr-reset", DwSsiState,
                        cfg.imr_reset, 0x0000003f),
     DEFINE_PROP_UINT32("axiawlen-reset", DwSsiState,
-                       cfg.axiawlen_reset, 0x00000700),
+                       cfg.axiawlen_reset, 0),
     DEFINE_PROP_UINT32("axiarlen-reset", DwSsiState,
-                       cfg.axiarlen_reset, 0x00000700),
+                       cfg.axiarlen_reset, 0),
     DEFINE_PROP_UINT32("spi-ctrlr0-reset", DwSsiState,
                        cfg.spi_ctrlr0_reset, 0x04000200),
 
+    DEFINE_PROP_UINT32("dma-register-layout", DwSsiState,
+                       cfg.dma_register_layout,
+                       DW_SSI_DMA_LAYOUT_NONE),
+
     DEFINE_PROP_BIT("has-enhanced-spi", DwSsiState,
-                    cfg.capabilities, 0, true),
+                    cfg.capabilities, 0, false),
     DEFINE_PROP_BIT("has-idma", DwSsiState,
-                    cfg.capabilities, 1, true),
+                    cfg.capabilities, 1, false),
     DEFINE_PROP_BIT("has-xip", DwSsiState,
-                    cfg.capabilities, 2, true),
+                    cfg.capabilities, 2, false),
     DEFINE_PROP_SIZE("xip-window-size", DwSsiState,
-                     cfg.xip_window_size, 0x08000000),
+                     cfg.xip_window_size, 0),
 };
 ```
 
-这些默认值仅用于 Step 4.1 保持当前 V2 中间态行为，不宣称是所有 DWC SSI 实例的硬件默认值。Step 4.2 后 K230 machine 必须显式设置表中全部字段；上游最终版是否继续保留兼容默认值，在 patch 重组时单独审阅，不在 Step 4 内提前收紧。
+通用默认实例只支持 Standard PIO/IRQ，不具有 DMA 寄存器布局和任何扩展 capability。K230 machine 必须显式设置表中全部字段。只能为 `false` 的 public capability property 有被上游认为“提前暴露接口”的风险；若 reviewer 要求严格 YAGNI，允许在投稿重组时保留内部全零位图、把 public property 随对应功能 series 引入，但绝不允许第一批静默接受 `true`。
 
 ### 3.3 realize 校验
 
@@ -317,34 +335,46 @@ static bool dw_ssi_validate_config(DwSsiState *s, Error **errp)
         return false;
     }
 
-    if (!dw_ssi_has_capability(s, DW_SSI_CAP_ENHANCED_SPI) &&
-        s->cfg.max_lines != 1) {
+    if (s->cfg.dma_register_layout >
+        DW_SSI_DMA_LAYOUT_INTERNAL_AXI) {
         error_setg(errp,
-                   "%s: max-lines must be 1 without enhanced SPI",
+                   "%s: invalid dma-register-layout",
                    dev->canonical_path);
         return false;
     }
 
-    if (dw_ssi_has_capability(s, DW_SSI_CAP_IDMA) &&
-        !dw_ssi_has_capability(s, DW_SSI_CAP_ENHANCED_SPI)) {
+    if (s->cfg.dma_register_layout != DW_SSI_DMA_LAYOUT_INTERNAL_AXI &&
+        (s->cfg.axiawlen_reset != 0 || s->cfg.axiarlen_reset != 0)) {
         error_setg(errp,
-                   "%s: IDMA requires the current enhanced SPI engine",
+                   "%s: AXI burst reset requires internal-axi DMA layout",
                    dev->canonical_path);
         return false;
     }
 
-    if (dw_ssi_has_capability(s, DW_SSI_CAP_XIP) &&
-        !dw_ssi_has_capability(s, DW_SSI_CAP_ENHANCED_SPI)) {
+    if (dw_ssi_has_capability(s, DW_SSI_CAP_ENHANCED_SPI)) {
         error_setg(errp,
-                   "%s: XIP requires the enhanced SPI engine",
+                   "%s: has-enhanced-spi is reserved for a follow-up series",
                    dev->canonical_path);
         return false;
     }
 
-    if (dw_ssi_has_capability(s, DW_SSI_CAP_XIP) !=
-        (s->cfg.xip_window_size != 0)) {
+    if (dw_ssi_has_capability(s, DW_SSI_CAP_IDMA)) {
         error_setg(errp,
-                   "%s: has-xip and xip-window-size must agree",
+                   "%s: has-idma is reserved for a follow-up series",
+                   dev->canonical_path);
+        return false;
+    }
+
+    if (dw_ssi_has_capability(s, DW_SSI_CAP_XIP)) {
+        error_setg(errp,
+                   "%s: has-xip is reserved for a follow-up series",
+                   dev->canonical_path);
+        return false;
+    }
+
+    if (s->cfg.xip_window_size != 0) {
+        error_setg(errp,
+                   "%s: xip-window-size must be 0 while has-xip is unavailable",
                    dev->canonical_path);
         return false;
     }
@@ -367,18 +397,18 @@ static bool dw_ssi_validate_config(DwSsiState *s, Error **errp)
 }
 ```
 
-`has-idma` 依赖 enhanced SPI 是当前实现约束：`dw_ssi_try_idma()` 使用 enhanced command decoder。它不是对所有 DWC SSI 硬件变体的普遍宣称；若后续独立实现 Standard-SPI IDMA，再单独放宽组合。
+这里故意不检查 `max-lines` 与 `has-enhanced-spi` 的组合。`max-lines` 是物理线宽综合参数，和当前是否实现 enhanced engine 正交；门控发生在 `CTRLR0.SPI_FRF` 写入和 transfer dispatch，而不是 realize。
+
+第一批也不检查 IDMA/XIP 之间的依赖组合，因为任何 capability=true 都先被明确拒绝。后续功能 series 删除对应 reserved 检查时，再在同一 patch 中加入当时真实实现所需的依赖校验。
 
 ### 3.4 property 依赖的资源创建
 
-`instance_init` 保留固定接口：SSI bus、控制器 MMIO、9 路 IRQ 和 `xip-enable` GPIO。以下代码是 Step 4 全部完成后的最终形态：`realize()` 先校验，再创建 CS、FIFO 和可选 XIP region。实施时 FIFO 部分在 Step 4.1 落地，`has-xip` 条件创建必须留到 Step 4.3.3，不能提前把 XIP capability 混入配置骨架 patch。
+`instance_init` 保留第一批固定接口：SSI bus、控制器 MMIO 和 9 路 IRQ。DONE/AXIE 两路先注册但恒低，以固定后续 IDMA series 的 sysbus IRQ 拓扑。`xip-enable` GPIO 和第二个 MMIO region 不在第一批创建，随 XIP series 一起加入。
 
 ```c
 static void dw_ssi_realize(DeviceState *dev, Error **errp)
 {
     DwSsiState *s = DW_SSI(dev);
-    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
-
     if (!dw_ssi_validate_config(s, errp)) {
         return;
     }
@@ -388,19 +418,12 @@ static void dw_ssi_realize(DeviceState *dev, Error **errp)
 
     fifo32_create(&s->tx_fifo, s->cfg.fifo_depth);
     fifo32_create(&s->rx_fifo, s->cfg.fifo_depth);
-
-    if (dw_ssi_has_capability(s, DW_SSI_CAP_XIP)) {
-        memory_region_init_io(&s->xip, OBJECT(s), &dw_ssi_xip_ops, s,
-                              TYPE_DW_SSI ".xip",
-                              s->cfg.xip_window_size);
-        sysbus_init_mmio(sbd, &s->xip);
-    }
 }
 ```
 
-控制器固定 MMIO region 0 继续在 `instance_init` 创建。XIP region 只有 `has-xip=true` 时才作为 region 1 注册；`has-xip=false` 的 machine 不能调用 `sysbus_mmio_map(..., 1, ...)`。
+控制器固定 MMIO region 0 继续在 `instance_init` 创建。第一批任何实例都只有 region 0，machine 不得调用 `sysbus_mmio_map(..., 1, ...)`。
 
-现有 `dw_ssi_finalize()` 继续统一执行 `fifo32_destroy()` 和 `g_free(s->cs_lines)`。QOM 实例内存初始为零，`fifo32_destroy()` / `g_free()` 对尚未创建的空资源安全，因此不新增 `fifo_created` 一类状态位。`realize()` 必须在全部配置校验通过后才创建 FIFO、CS 和 XIP region，且资源创建后不再执行可能失败的配置检查，避免部分创建状态。
+现有 `dw_ssi_finalize()` 继续统一执行 `fifo32_destroy()` 和 `g_free(s->cs_lines)`。QOM 实例内存初始为零，`fifo32_destroy()` / `g_free()` 对尚未创建的空资源安全，因此不新增 `fifo_created` 一类状态位。`realize()` 必须在全部配置校验通过后才创建 FIFO 和 CS，且资源创建后不再执行可能失败的配置检查，避免部分创建状态。
 
 ### 3.5 动态 FIFO 的全部影响点
 
@@ -431,41 +454,124 @@ static bool dw_ssi_fifo_threshold_valid(DwSsiState *s, uint32_t value)
 
 ```c
 s->regs[R_IMR] = s->cfg.imr_reset;
-s->regs[R_AXIAWLEN] = s->cfg.axiawlen_reset;
-s->regs[R_AXIARLEN] = s->cfg.axiarlen_reset;
+s->regs[R_AXIAWLEN] =
+    s->cfg.dma_register_layout == DW_SSI_DMA_LAYOUT_INTERNAL_AXI ?
+    s->cfg.axiawlen_reset : 0;
+s->regs[R_AXIARLEN] =
+    s->cfg.dma_register_layout == DW_SSI_DMA_LAYOUT_INTERNAL_AXI ?
+    s->cfg.axiarlen_reset : 0;
 s->regs[R_IDR] = s->cfg.component_id;
 s->regs[R_SSIC_VERSION_ID] = s->cfg.version_id;
-s->regs[R_SPI_CTRLR0] =
-    dw_ssi_has_capability(s, DW_SSI_CAP_ENHANCED_SPI) ?
-    s->cfg.spi_ctrlr0_reset : 0;
+s->regs[R_SPI_CTRLR0] = s->cfg.spi_ctrlr0_reset;
 ```
 
-reset 末尾调用 capability 状态收敛函数，保证 absent capability 的寄存器、状态和 IRQ 均为无效状态。
+external layout 下 `0x050/0x054` 对应 DMATDLR/DMARDLR，reset 固定为 0；internal-axi layout 才使用 K230 profile 的 AXI burst reset。`SPI_CTRLR0` 始终保留 profile reset，但第一批不允许其扩展字段驱动数据路径。reset 末尾清除 DONE/AXIE latch，保证两路输出恒低。
 
 ---
 
-## 4. capability 门控设计
+## 4. 寄存器 layout 与 capability 分层设计
 
-### 4.1 集中寄存器分组
+### 4.1 两类门控不能共用
 
-禁止在 read/write switch 的每个 case 中散落 `if (s->cfg.has_...)`。新增寄存器分组辅助函数：
+禁止用单一 `dw_ssi_reg_capability()` 同时决定“寄存器是否存在”和“引擎是否运行”。第一批必须分成两层：
+
+1. `dma-register-layout`：决定 DMA 寄存器版图、offset 解释、字段 mask、reset 和存储 readback；
+2. capability：决定 enhanced/IDMA/XIP 数据路径、guest memory 访问、事件和额外资源。
+
+DMA layout 辅助函数示意：
 
 ```c
-typedef enum DwSsiRegCapability {
-    DW_SSI_REG_CAP_NONE = 0,
-    DW_SSI_REG_CAP_ENHANCED = BIT(0),
-    DW_SSI_REG_CAP_IDMA = BIT(1),
-    DW_SSI_REG_CAP_XIP = BIT(2),
-} DwSsiRegCapability;
+static bool dw_ssi_dma_reg_present(const DwSsiState *s, hwaddr addr)
+{
+    switch (s->cfg.dma_register_layout) {
+    case DW_SSI_DMA_LAYOUT_NONE:
+        return false;
+    case DW_SSI_DMA_LAYOUT_EXTERNAL:
+        return addr == A_DMACR || addr == 0x050 || addr == 0x054;
+    case DW_SSI_DMA_LAYOUT_INTERNAL_AXI:
+        switch (addr) {
+        case A_DMACR:
+        case A_AXIAWLEN:
+        case A_AXIARLEN:
+        case A_SPIDR:
+        case A_SPIAR:
+        case A_AXIAR0:
+        case A_AXIAR1:
+        case A_AXIECR:
+        case A_DONECR:
+            return true;
+        default:
+            return false;
+        }
+    default:
+        return false;
+    }
+}
+```
 
+`0x050/0x054` 在 C 代码中只按当前 layout 选择一个字段视图，不能生成两个同时可访问的地址。external layout 的 read/write callback 使用 DMATDLR/DMARDLR 字段，internal-axi layout 使用 AXIAWLEN/AXIARLEN 字段。
+
+其他扩展寄存器单独分类：
+
+```text
+始终存在/profile-visible：SPI_CTRLR0
+enhanced-only：DDR_DRIVE_EDGE
+XIP-only：XIP_MODE_BITS、XIP_INCR_INST、XIP_WRAP_INST、XIP_CTRL、...
+```
+
+第一批 `SPI_CTRLR0` 读回 profile reset；`DDR_DRIVE_EDGE` 和 XIP-only 组 RAZ/WI。layout-visible DMA 配置寄存器按 mask 保存和读回，即使 `has-idma=false` 也不消失。
+
+### 4.2 第一批精确语义
+
+| 控制项 | 寄存器语义 | IRQ | 状态与数据路径 | realize 资源 |
+|---|---|---|---|---|
+| `has-enhanced-spi=false` | `CTRLR0.SPI_FRF` 非零写入忽略或清零；`SPI_CTRLR0` 保留 profile reset；纯 enhanced 寄存器 RAZ/WI | 无 enhanced IRQ | 只进入 Standard PIO/TMOD | 无额外资源 |
+| `dma-register-layout=external` | `DMACR/DMATDLR/DMARDLR` 按字段 mask 保存读回 | 不产生 DMA request | 无 DMA 数据通路 | 无额外资源 |
+| `dma-register-layout=internal-axi`、`has-idma=false` | `DMACR/AXIAWLEN/AXIARLEN/SPIDR/SPIAR/AXIAR0/1` 按 mask 保存读回；`AXIECR/DONECR` 读 0 | DONE/AXIE 位无效且输出恒低；TXU 仍有效 | 不访问 guest memory，DR 保持 PIO FIFO 语义 | 无额外资源 |
+| `has-xip=false` | XIP-only 寄存器 RAZ/WI；共享 `SPI_CTRLR0` reset 仍可见 | XRXO/SPITE 不暴露 | 无 XIP transaction | 无 GPIO、无第二 region |
+
+### 4.3 capability property 的第一批契约
+
+三项 capability 在第一批都只能为 `false`。`dw_ssi_validate_config()` 对任一 `true` 返回带 property 名称的 realize error。第一批不能存在以下坏语义：
+
+```text
+has-enhanced-spi=true + SPI_FRF=Dual
+                ↓
+静默按 Standard 传输
+```
+
+后续 series 删除对应 reserved 检查时，必须在同一个 patch 中加入：寄存器正路径、数据路径、IRQ/资源行为和 qtest。不能先允许 `true`，再依赖后续 patch 补功能。
+
+### 4.4 IDMA 后续 series 的防回归约束
+
+第一批不保存 `idma_completed_frames` 等 IDMA 运行时状态，也不访问 guest memory。DONE/AXIE 两路物理输出虽然提前注册，但始终保持低。
+
+IDMA series 必须继续满足 Step 4.0 已验证的事务边界：普通 enhanced/IDMA 1-4-4 只执行：
+
+```text
+instruction → address → dummy → data
+```
+
+`XIP_MODE_BITS` 继续属于 XIP-only 寄存器组，不得改成 shared，也不得重新加入 `TRANS_TYPE=1 && WAIT_CYCLES>=2` 的 mode-byte 特判。SDK 风格 `0xeb` IDMA 回归必须随 IDMA series 一起恢复，证明 dummy 只由 `WAIT_CYCLES` 表达。
+
+### 4.5 XIP 后续资源边界
+
+第一批 `has-xip=false,xip-window-size=0`，不创建 `xip-enable` GPIO 和第二个 MemoryRegion，K230 不映射 `0xc0000000`。XIP series 才同时引入：
+
+- `has-xip=true` 的 realize 正路径；
+- `xip-window-size` 非零校验；
+- `xip-enable` GPIO；
+- 第二个 MMIO region；
+- K230 `0xc0000000` 映射；
+- XIP transaction 和对应迁移状态。
+
+以下旧式集中分组在 V1.1 中明确废除，不能继续实现：
+
+```c
+/* Wrong: layout-visible registers must not be hidden by has-idma. */
 static unsigned int dw_ssi_reg_capability(hwaddr addr)
 {
     switch (addr) {
-    case A_SPI_CTRLR0:
-    case A_DDR_DRIVE_EDGE:
-        return DW_SSI_REG_CAP_ENHANCED;
-
-    case A_DMACR:
     case A_AXIAWLEN:
     case A_AXIARLEN:
     case A_SPIDR:
@@ -474,78 +580,10 @@ static unsigned int dw_ssi_reg_capability(hwaddr addr)
     case A_AXIAR1:
     case A_AXIECR:
     case A_DONECR:
-        return DW_SSI_REG_CAP_IDMA;
-
-    case A_XIP_MODE_BITS:
-    case A_XIP_INCR_INST:
-    case A_XIP_WRAP_INST:
-    case A_XIP_CTRL:
-    case A_XIP_SER:
-    case A_XRXOICR:
-    case A_XIP_CNT_TIME_OUT:
-    case A_XIP_WRITE_INCR_INST:
-    case A_XIP_WRITE_WRAP_INST:
-    case A_XIP_WRITE_CTRL:
-        return DW_SSI_REG_CAP_XIP;
-
-    default:
-        return DW_SSI_REG_CAP_NONE;
+        return DW_SSI_REG_CAP_IDMA; /* Do not do this. */
     }
 }
 ```
-
-`dw_ssi_reg_present()` 只在 read/write 入口调用一次；capability 关闭时直接 RAZ/WI。当前本来就未实现的 concurrent XIP、dynamic wait 和 XIP write 寄存器继续 RAZ/WI，不因 `has-xip=true` 自动变成已实现。
-
-### 4.2 capability 关闭语义
-
-| capability | 关闭时寄存器语义 | IRQ | 状态与数据路径 | realize 资源 |
-|---|---|---|---|---|
-| `has-enhanced-spi=false` | `CTRLR0.SPI_FRF` 读 0/写忽略；`SPI_CTRLR0`、`DDR_DRIVE_EDGE` RAZ/WI | 当前无独立 enhanced IRQ | 不进入 enhanced phase；Standard PIO/TMOD 保持可用 | 无额外资源变化 |
-| `has-idma=false` | `DMACR`、`AXIAWLEN`、`AXIARLEN`、`SPIDR`、`SPIAR`、`AXIAR0/1`、`AXIECR`、`DONECR` RAZ/WI | 仅 DONE、AXIE 对应 IMR/ISR/RISR 位无效且输出恒低；TXU 仍是有效的 TX FIFO underflow IRQ | `idma_completed_frames=0`；不访问 guest memory；DR 恢复普通 FIFO 语义 | 无额外资源变化 |
-| `has-xip=false` | 专用 XIP 寄存器组 RAZ/WI；共享 `SPI_CTRLR0` 仍按 enhanced profile 可见 | 当前模型没有实现独立 XRXO/SPITE 输出，不新增 IRQ | `xip_enabled=false`；GPIO 电平被忽略；无 XIP transaction | 不创建第二个 MMIO region |
-
-### 4.3 `has-enhanced-spi`
-
-需要同时门控三个位置：
-
-1. `CTRLR0` 读写 mask：关闭时清除 `SPI_FRF` 和 `SPI_HYPERBUS_EN`；
-2. `SPI_CTRLR0` / `DDR_DRIVE_EDGE` 寄存器存在性；
-3. `dw_ssi_run_transfer()`：只有 capability 开启且 `SPI_FRF != 0` 才进入 enhanced engine。
-
-`dw_ssi_get_spi_mode()` 在 capability 关闭时返回 0，保证 HI_SYS 不会观察到不存在的 enhanced mode。
-
-### 4.4 `has-idma`
-
-`dw_ssi_idma_enabled()` 成为 IDMA 的单一运行时入口：
-
-```c
-static bool dw_ssi_idma_enabled(const DwSsiState *s)
-{
-    return dw_ssi_has_capability(s, DW_SSI_CAP_IDMA) &&
-           FIELD_EX32(s->regs[R_DMACR], DMACR, IDMAE);
-}
-```
-
-同时新增 `dw_ssi_irq_valid_mask()`：TXE、TXO、RXF、RXO、TXU、RXU、MST 始终属于基础 IRQ，只有 `has-idma=true` 时再加入 DONE、AXIE。`dw_ssi_irq_raw_status()`、IMR 读写和 `dw_ssi_update_irq()` 全部使用这一动态 mask，避免仅在数据路径阻止 IDMA、却仍让 guest 写出可见 DONE/AXIE 位。
-
-IDMA 关闭后仍保留 `idma_completed_frames`、enhanced command 等结构字段和 VMState 字段，避免按 capability 条件改变迁移流结构。reset 清空 absent capability 的正常状态；post-load 遇到与 capability 冲突的迁移状态时拒绝加载，不静默修改迁移流。
-
-### 4.5 `has-xip`
-
-XIP capability 分为三层，不得混淆：
-
-1. `has-xip`：实例是否具有专用 XIP 寄存器和 XIP MMIO 访问接口；
-2. `xip-window-size`：region 大小，必须与 `has-xip` 同时存在；
-3. `xip-enable` GPIO：运行时访问开关，不决定 region 是否创建。
-
-`has-xip=false` 时：
-
-- `XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 及未实现扩展寄存器全部 RAZ/WI；
-- `dw_ssi_xip_enable_handler()` 强制保持 `xip_enabled=false`；
-- `dw_ssi_xip_read()` 不可达，因为没有第二个 MemoryRegion；
-- machine 不映射 region 1。
-
-`has-xip=true` 时只恢复当前已有的 XIP read window 行为；XIP write 仍记录 guest error，concurrent XIP/dynamic wait/write-register 扩展仍保持 RAZ/WI。
 
 ---
 
@@ -568,6 +606,7 @@ typedef struct K230DwSsiProfile {
     uint32_t axiawlen_reset;
     uint32_t axiarlen_reset;
     uint32_t spi_ctrlr0_reset;
+    uint32_t dma_register_layout;
     bool has_enhanced_spi;
     bool has_idma;
     bool has_xip;
@@ -585,8 +624,9 @@ static const K230DwSsiProfile k230_dw_ssi_profiles[] = {
         .axiawlen_reset = 0x00000700,
         .axiarlen_reset = 0x00000700,
         .spi_ctrlr0_reset = 0x04000200,
-        .has_enhanced_spi = true,
-        .has_idma = true,
+        .dma_register_layout = DW_SSI_DMA_LAYOUT_INTERNAL_AXI,
+        .has_enhanced_spi = false,
+        .has_idma = false,
         .has_xip = false,
         .xip_window_size = 0,
     },
@@ -600,8 +640,9 @@ static const K230DwSsiProfile k230_dw_ssi_profiles[] = {
         .axiawlen_reset = 0x00000700,
         .axiarlen_reset = 0x00000700,
         .spi_ctrlr0_reset = 0x04000200,
-        .has_enhanced_spi = true,
-        .has_idma = true,
+        .dma_register_layout = DW_SSI_DMA_LAYOUT_INTERNAL_AXI,
+        .has_enhanced_spi = false,
+        .has_idma = false,
         .has_xip = false,
         .xip_window_size = 0,
     },
@@ -615,10 +656,11 @@ static const K230DwSsiProfile k230_dw_ssi_profiles[] = {
         .axiawlen_reset = 0,
         .axiarlen_reset = 0,
         .spi_ctrlr0_reset = 0x28000200,
-        .has_enhanced_spi = true,
-        .has_idma = true,
-        .has_xip = true,
-        .xip_window_size = 0x08000000,
+        .dma_register_layout = DW_SSI_DMA_LAYOUT_INTERNAL_AXI,
+        .has_enhanced_spi = false,
+        .has_idma = false,
+        .has_xip = false,
+        .xip_window_size = 0,
     },
 };
 ```
@@ -645,6 +687,8 @@ static void k230_configure_dw_ssi(DwSsiState *ssi,
     qdev_prop_set_uint32(dev, "axiarlen-reset", profile->axiarlen_reset);
     qdev_prop_set_uint32(dev, "spi-ctrlr0-reset",
                          profile->spi_ctrlr0_reset);
+    qdev_prop_set_uint32(dev, "dma-register-layout",
+                         profile->dma_register_layout);
     qdev_prop_set_bit(dev, "has-enhanced-spi",
                       profile->has_enhanced_spi);
     qdev_prop_set_bit(dev, "has-idma", profile->has_idma);
@@ -656,7 +700,7 @@ static void k230_configure_dw_ssi(DwSsiState *ssi,
 
 在三个 SSI realize 前循环调用，删除当前六个分散的 `num-cs` / `max-lines` 设置。
 
-### 5.3 条件映射 XIP region
+### 5.3 第一批只映射控制器 region 0
 
 ```c
 for (int i = 0; i < ARRAY_SIZE(s->dw_ssi); i++) {
@@ -673,15 +717,20 @@ sysbus_mmio_map(SYS_BUS_DEVICE(&s->dw_ssi[1]), 0,
 sysbus_mmio_map(SYS_BUS_DEVICE(&s->dw_ssi[2]), 0,
                 memmap[K230_DEV_SPI].base);
 
-for (int i = 0; i < ARRAY_SIZE(s->dw_ssi); i++) {
-    g_assert(sysbus_has_mmio(SYS_BUS_DEVICE(&s->dw_ssi[i]), 1) ==
-             k230_dw_ssi_profiles[i].has_xip);
-}
-sysbus_mmio_map(SYS_BUS_DEVICE(&s->dw_ssi[2]), 1,
-                memmap[K230_DEV_FLASH].base);
 ```
 
-QSPI profile 的 `has-xip=false` 会使其只暴露 region 0。region 数量与 profile 的断言在 Step 4.3.3 随 XIP 资源门控一起加入；Step 4.2 只先停止映射 QSPI region 1，不能提前要求该断言成立。HI_SYS 的 `xip-enable` GPIO 仍只连接 `dw_ssi[2]`，与 Step 3 的依赖方向保持一致。
+三个 profile 均只有 region 0。第一批删除 K230 到 SSI 的 `xip-enable` GPIO 连接，不调用 `sysbus_mmio_map(..., 1, ...)`，也不把 `0xc0000000` 映射为 XIP aperture。
+
+### 5.4 Standard 1-1-1 SPI Flash 挂接
+
+最终选择 5.5-A：第一批保留 `spi-flash` machine property，并把 M25P80-compatible NOR 挂到选定 SSI bus/CS。该 patch 只验证 Standard 1-1-1 PIO 访问：
+
+- 不使用 `SPI_FRF=Dual/Quad`；
+- 不设置 `IDMAE`；
+- 不创建或访问 XIP aperture；
+- 不把 U-Boot enhanced/IDMA 启动作为第一批合入条件。
+
+Flash 挂接必须是独立 patch，不能与通用 `dw_ssi.c` 寄存器模型混在一起。测试至少验证 JEDEC ID 或固定地址普通读，证明 K230 实例具备真实 SSI peripheral consumer。
 
 ---
 
@@ -689,18 +738,18 @@ QSPI profile 的 `has-xip=false` 会使其只暴露 region 0。region 数量与 
 
 ### 6.1 选择独立通用 qtest
 
-K230 三实例均具备 enhanced SPI 和 IDMA，无法覆盖这两项 capability 的 `false`。本计划采用独立通用测试机，不向 K230 产品 machine 增加测试专用 property。
+K230 三实例在第一批均设置三项 capability 为 `false`，可以覆盖产品 profile 的关闭行为；仍保留独立通用测试机，用于覆盖 `none/external/internal-axi` 三种 DMA layout、不同 FIFO 深度以及 capability=true 的 realize 拒绝路径，不向 K230 产品 machine 增加测试专用 property。
 
 新增文件：
 
 | 文件 | 职责 |
 |---|---|
 | `hw/ssi/dw_ssi-test.c` | `CONFIG_DW_SSI && CONFIG_TEST_DEVICES` 下注册无 CPU 的最小 `dw-ssi-test` machine，实例化一个 `TYPE_DW_SSI` |
-| `tests/qtest/dw-ssi-test.c` | 通过 `-preconfig` + QMP `qom-set` 建立不同配置，验证 property、FIFO、RAZ/WI、IRQ 和 XIP region 生命周期 |
+| `tests/qtest/dw-ssi-test.c` | 通过 `-preconfig` + QMP `qom-set` 建立不同配置，验证 property、FIFO、DMA layout、RAZ/WI、IRQ 和 capability 拒绝路径 |
 | `hw/ssi/meson.build` | 条件编译测试 machine |
 | `tests/qtest/meson.build` | 构建并注册 `dw-ssi-test` |
 
-测试 machine 只做三件事：创建一个 DW SSI、realize、映射 region 0；若 `sysbus_has_mmio(sbd, 1)` 为真，再把 region 1 映射到固定测试地址。它不连接 K230 HI_SYS、PLIC 或 Flash，不包含 K230 常量。
+测试 machine 只做三件事：创建一个 DW SSI、realize、映射 region 0。它不连接 K230 HI_SYS、PLIC 或 Flash，不包含 K230 常量。
 
 ```c
 #include "qemu/osdep.h"
@@ -711,8 +760,6 @@ K230 三实例均具备 enhanced SPI 和 IDMA，无法覆盖这两项 capability
 #include "hw/ssi/dw_ssi.h"
 
 #define DW_SSI_TEST_MMIO_BASE 0x10000000
-#define DW_SSI_TEST_XIP_BASE  0x20000000
-
 #define TYPE_DW_SSI_TEST_MACHINE MACHINE_TYPE_NAME("dw-ssi-test")
 OBJECT_DECLARE_SIMPLE_TYPE(DwSsiTestMachineState, DW_SSI_TEST_MACHINE)
 
@@ -735,9 +782,6 @@ static void dw_ssi_test_machine_init(MachineState *machine)
 
     sysbus_realize(sbd, &error_fatal);
     sysbus_mmio_map(sbd, 0, DW_SSI_TEST_MMIO_BASE);
-    if (sysbus_has_mmio(sbd, 1)) {
-        sysbus_mmio_map(sbd, 1, DW_SSI_TEST_XIP_BASE);
-    }
 }
 
 static void dw_ssi_test_machine_class_init(ObjectClass *oc,
@@ -772,7 +816,7 @@ static void dw_ssi_test_machine_register_types(void)
 type_init(dw_ssi_test_machine_register_types)
 ```
 
-测试机不创建 CPU、RAM、PLIC 或 Flash。控制器 child 必须在 machine `instance_init` 创建，而不是在 `MachineClass::init` 才创建：这样正常启动仍由 machine init realize 和映射；`-preconfig` 启动时则已经存在未 realize 的 `/machine/dw-ssi`，非法 property 测试可以通过 QMP 触发 realize 并接收正常 error response。region 1 是否存在只由控制器 realize 后的 `sysbus_has_mmio()` 决定。
+测试机不创建 CPU、RAM、PLIC 或 Flash。控制器 child 必须在 machine `instance_init` 创建，而不是在 `MachineClass::init` 才创建：这样正常启动仍由 machine init realize 和映射；`-preconfig` 启动时则已经存在未 realize 的 `/machine/dw-ssi`，非法 property 测试可以通过 QMP 触发 realize 并接收正常 error response。
 
 Meson 条件：
 
@@ -867,20 +911,21 @@ static void test_invalid_config(gconstpointer opaque)
 
 所有通用测试都从 `-preconfig` 开始，通过 QMP 设置本用例需要的 properties。有效配置执行 `x-exit-preconfig`，由 machine init realize 控制器并映射 region；非法配置直接对 child 设置 `realized=true` 并断言 QMP error。properties 尚未实现时，setup `qom-set` 先失败；properties 存在但行为或校验尚未实现时，后续断言失败，两种状态都能形成明确的 TDD 红灯且不会阻塞 QMP。
 
-注册非法路径使用 `/dw-ssi/config/invalid/<case>`；例如 `num-cs-zero`、`fifo-depth-too-large`、`idma-without-enhanced`。每个 data case 列出属性数组；`error_text` 只省略设备 canonical path，保留核心错误文本。
+注册非法路径使用 `/dw-ssi/config/invalid/<case>`；例如 `num-cs-zero`、`fifo-depth-too-large`、`enhanced-reserved`、`idma-reserved`、`xip-reserved`。每个 data case 列出属性数组；`error_text` 只省略设备 canonical path，保留核心错误文本。
 
 典型配置：
 
 ```c
 static const DwSsiTestProperty standard_only[] = {
-    { "max-lines", 1, false },
+    { "max-lines", 4, false },
+    { "dma-register-layout", DW_SSI_DMA_LAYOUT_INTERNAL_AXI, false },
     { "has-enhanced-spi", false, true },
     { "has-idma", false, true },
     { "has-xip", false, true },
     { "xip-window-size", 0, false },
 };
 
-static const DwSsiTestProperty enhanced_no_idma[] = {
+static const DwSsiTestProperty invalid_enhanced[] = {
     { "max-lines", 4, false },
     { "has-enhanced-spi", true, true },
     { "has-idma", false, true },
@@ -888,12 +933,13 @@ static const DwSsiTestProperty enhanced_no_idma[] = {
     { "xip-window-size", 0, false },
 };
 
-static const DwSsiTestProperty full_xip[] = {
-    { "max-lines", 4, false },
-    { "has-enhanced-spi", true, true },
+static const DwSsiTestProperty invalid_idma[] = {
+    { "max-lines", 8, false },
+    { "dma-register-layout", DW_SSI_DMA_LAYOUT_INTERNAL_AXI, false },
+    { "has-enhanced-spi", false, true },
     { "has-idma", true, true },
-    { "has-xip", true, true },
-    { "xip-window-size", 0x01000000, false },
+    { "has-xip", false, true },
+    { "xip-window-size", 0, false },
 };
 ```
 
@@ -936,21 +982,21 @@ instruction → address → optional mode → dummy → data
 
 ---
 
-## 8. Step 4.1：建立配置骨架并保持当前行为
+## 8. Step 4.1：建立第一批配置骨架
 
 ### 目标
 
-先引入配置表达、校验、动态 FIFO 和通用测试载体，但默认值保持当前 behavior。此阶段不让 capability 改变寄存器可见性；现有 K230 machine 即使尚未设置新 property，12 项 qtest 也必须保持通过。
+引入配置表达、DMA register layout、动态 FIFO 和通用测试载体。通用默认实例从本步开始就是第一批契约：三项 capability 全 `false`、layout 为 `none`，不再保持当前 V2 中间态的 enhanced/IDMA/XIP 正路径。
 
 ### TDD 顺序
 
 1. 新增 `dw-ssi-test` 最小 machine 和 qtest 骨架；
-2. 先写 property 默认值、`fifo-depth=8` 和非法取值测试，确认当前代码因 property 不存在或 FIFO 仍为 256 而失败；
+2. 先写 property 默认值、`fifo-depth=8`、三种 DMA layout 和非法取值测试；
 3. 增加 `DwSsiConfig` 和 properties；
 4. 增加 `dw_ssi_validate_config()`；
 5. 把 FIFO 创建移到 realize，并替换所有固定容量判断；
-6. reset 改从 `cfg` 读取，但默认值与当前常量一致；
-7. 运行通用定向 qtest 和现有 K230 12 项回归。
+6. reset 改从 `cfg` 和 layout 读取；
+7. 运行通用定向 qtest 和仍属于第一批范围的 K230 Standard PIO/IRQ 回归。
 
 ### 失败断言
 
@@ -969,11 +1015,12 @@ instruction → address → optional mode → dummy → data
 | `num-cs` | 0、9 | `num-cs must be in range 1..8` |
 | `fifo-depth` | 1、257 | `fifo-depth must be in range 2..256` |
 | `max-lines` | 3 | `max-lines must be 1, 2, 4, or 8` |
-| `has-enhanced-spi=off` | `max-lines=4` | `max-lines must be 1 without enhanced SPI` |
-| `has-idma=on` | `has-enhanced-spi=off,max-lines=1,has-xip=off,xip-window-size=0` | `IDMA requires the current enhanced SPI engine` |
-| `has-xip=on` | `has-enhanced-spi=off,max-lines=1,has-idma=off,xip-window-size=16M` | `XIP requires the enhanced SPI engine` |
-| `has-xip=on` | `xip-window-size=0` | `has-xip and xip-window-size must agree` |
-| `has-xip=off` | `xip-window-size=16M` | `has-xip and xip-window-size must agree` |
+| `dma-register-layout` | 超出 `none/external/internal-axi` | `invalid dma-register-layout` |
+| `dma-register-layout=none/external` | 非零 `axiawlen-reset/axiarlen-reset` | `AXI burst reset requires internal-axi DMA layout` |
+| `has-enhanced-spi=on` | 任意其他合法参数 | `has-enhanced-spi is reserved for a follow-up series` |
+| `has-idma=on` | `dma-register-layout=internal-axi` | `has-idma is reserved for a follow-up series` |
+| `has-xip=on` | `xip-window-size=0` | `has-xip is reserved for a follow-up series` |
+| `has-xip=off` | `xip-window-size=16M` | `xip-window-size must be 0 while has-xip is unavailable` |
 | `imr-reset` | `0x80000000` | `imr-reset contains unsupported bits` |
 | `axiawlen-reset` / `axiarlen-reset` | `1` | `reset property contains unsupported bits` |
 | `spi-ctrlr0-reset` | `0x80000000` | `reset property contains unsupported bits` |
@@ -992,8 +1039,10 @@ build/tests/qtest/dw-ssi-test -p /dw-ssi/config -v
 
 - `DwSsiConfig` 与完整 property 集合存在；
 - `fifo-depth=8` 的通用测试通过；
-- 默认启动 K230 的 12 项 qtest 全部通过；
-- capability 仍未改变寄存器可见性，避免在同一小目标混入门控行为。
+- `max-lines=4/8 + has-enhanced-spi=false` 均可正常 realize；
+- capability=true 的三条 reserved 路径均被拒绝；
+- `none/external/internal-axi` 的寄存器视图和 readback 测试通过；
+- 仍属于第一批范围的 K230 Standard PIO/IRQ 回归通过。
 
 ---
 
@@ -1008,10 +1057,10 @@ build/tests/qtest/dw-ssi-test -p /dw-ssi/config -v
 1. 扩展 `K230SsiInstance` 测试表，先写三实例完整 expected profile；
 2. 让 `test_register_contract()` 对每个实例读取 IMR、AXI burst、IDR、VERSION、`SPI_CTRLR0`；
 3. 新增 `/k230-dw-ssi/fifo-depth`，实际写入 256 帧并验证第 257 帧不增加 level；
-4. 通过 QMP `qom-get` 验证每个 child 的 `fifo-depth`、`max-lines` 和三项 capability property；
+4. 通过 QMP `qom-get` 验证每个 child 的 `fifo-depth`、`max-lines`、`dma-register-layout` 和三项 capability property；
 5. 在 `k230.c` 增加 profile 数组和设置 helper；
 6. 删除 reset 中 `max_lines == 8` 的 FMC 推断；
-7. 仅为 FMC 映射 region 1；
+7. 删除 FMC region 1 映射和 HI_SYS `xip-enable` GPIO 连接；
 8. system reset 后重新执行三实例 profile 断言。
 
 ### 三实例 reset 断言
@@ -1064,36 +1113,39 @@ build/tests/qtest/k230-dw-ssi-test \
 - K230 machine 显式设置全部 property；
 - QSPI0/QSPI1/FMC 的 reset profile 与配置矩阵一致；
 - 5/5/1 个 CS 和 256 深度 FIFO 有行为断言；
-- K230 只映射 FMC 的 XIP region；QSPI 的 `has-xip=false` 已写入 profile，但“不创建 region 1”的资源门控留到 Step 4.3.3；
-- 现有 12 项测试仍全过。
+- 三实例均为 `internal-axi` layout、三项 capability 全 `false`、`xip-window-size=0`；
+- 三实例都只创建和映射 region 0，`0xc0000000` 不映射；
+- Standard PIO/IRQ 和寄存器兼容性测试通过。
 
 ---
 
-## 10. Step 4.3：逐项接入 capability 门控
+## 10. Step 4.3：锁定第一批 capability 保留契约
 
-三个 capability 必须形成三个独立、可验证的小改动。每项先在 `dw-ssi-test` 写 `false` 负路径，再实现门控，最后运行 K230 正路径回归。
+三个 capability 在第一批都不开放。每项必须同时具备两类测试：默认 `false` 时不存在对应数据路径；设置为 `true` 时 realize 返回明确 reserved error。不能存在“property=true 但静默按 Standard/PIO 执行”的中间态。
 
 ### 10.1 `has-enhanced-spi`
 
 #### 失败测试
 
-`/dw-ssi/capability/enhanced-off`：
+`/dw-ssi/capability/enhanced-off` 和 `/dw-ssi/config/invalid/enhanced-reserved`：
 
 - 启动 Standard-only profile；
 - 向 `CTRLR0.SPI_FRF` 写 Quad，读回仍为 Standard；
-- 向 `SPI_CTRLR0`、`DDR_DRIVE_EDGE` 写全 1，读回 0；
+- `SPI_CTRLR0` 先读到 profile reset；写扩展字段后不得进入 enhanced path；`DDR_DRIVE_EDGE` 读回 0；
 - 配置 Standard loopback，PIO 收发仍正常；
 - 尝试 enhanced command 后 TX FIFO 不被 enhanced engine 消费；
 - `CTRLR0.SPI_FRF` 读回 Standard，间接证明 `dw_ssi_get_spi_mode()` 的输入已收敛为 0；不为内部 getter 增加测试专用 property。
+- 设置 `has-enhanced-spi=true` 后 realize 失败，错误包含 `has-enhanced-spi is reserved for a follow-up series`。
 
 #### 最小实现
 
-- `dw_ssi_reg_present()` 门控 `SPI_CTRLR0`、`DDR_DRIVE_EDGE`；
+- `SPI_CTRLR0` 保持 profile-visible，只有 `DDR_DRIVE_EDGE` 等纯扩展寄存器 RAZ/WI；
 - CTRLR0 read/write mask 动态清除 enhanced 字段；
-- `dw_ssi_run_transfer()` 在 capability 关闭时只走 Standard path；
-- reset/post-load 清 enhanced phase 和 command 状态。
+- `dw_ssi_run_transfer()` 第一批只包含 Standard path；
+- realize 对 `has-enhanced-spi=true` 返回 reserved error；
+- 第一批 VMState 不保存 enhanced command/phase 状态。
 
-#### 正路径回归
+#### 第一批回归
 
 ```bash
 TMPDIR=/tmp/qemu-k230-qtest-v2-step4 \
@@ -1103,34 +1155,32 @@ build/tests/qtest/dw-ssi-test \
 TMPDIR=/tmp/qemu-k230-qtest-v2-step4 \
 QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
 build/tests/qtest/k230-dw-ssi-test \
-  -p /k230-dw-ssi/qspi-config -v
-TMPDIR=/tmp/qemu-k230-qtest-v2-step4 \
-QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
-build/tests/qtest/k230-dw-ssi-test \
-  -p /k230-dw-ssi/qspi-sdr -v
+  -p /k230-dw-ssi/register-contract -v
 ```
 
 ### 10.2 `has-idma`
 
 #### 失败测试
 
-`/dw-ssi/capability/idma-off`：
+`/dw-ssi/capability/idma-off` 和 `/dw-ssi/config/invalid/idma-reserved`：
 
-- `DMACR`、`AXIAWLEN`、`AXIARLEN`、`SPIDR`、`SPIAR`、`AXIAR0/1` 写后读回 0；
+- `dma-register-layout=internal-axi` 时，`DMACR`、`AXIAWLEN`、`AXIARLEN`、`SPIDR`、`SPIAR`、`AXIAR0/1` 按字段 mask 保存和读回；
 - `AXIECR`、`DONECR` 读取为 0；
 - 向 IMR 写 DONE/AXIE 位，读回仍为 0；TXU 位仍可写入和读回；
 - 尝试写 `IDMAE`、SSIENR、SER 后不访问 guest memory；
 - `SR.CMPLTD_DF == 0`；
 - 用 `qtest_irq_intercept_out()` 拦截 `/machine/dw-ssi`，DONE/AXIE 两路保持低；再制造 TX FIFO underflow，确认 TXU raw status 和输出仍可见；
 - DR 写入继续进入普通 TX FIFO，证明关闭 IDMA 没有破坏 PIO。
+- 设置 `has-idma=true` 后 realize 失败，错误包含 `has-idma is reserved for a follow-up series`。
 
 #### 最小实现
 
-- 寄存器分组统一返回 RAZ/WI；
-- `dw_ssi_idma_enabled()` 加 capability 条件；
+- DMA layout helper 决定寄存器存在性和字段 mask，不能用 `has-idma` 隐藏 layout-visible 寄存器；
+- 第一批不保留可启动的 `dw_ssi_idma_enabled()` 数据路径；
 - 动态 IRQ mask只排除 DONE/AXIE；
-- reset 清 `idma_completed_frames` 和 DONE/AXIE latch；post-load 遇到冲突状态返回错误；
-- 不删除 IDMA 字段，不条件化 VMState。
+- reset 清 DONE/AXIE latch；
+- realize 对 `has-idma=true` 返回 reserved error；
+- 第一批 VMState 不保存 IDMA engine 运行时字段。
 
 #### 正路径回归
 
@@ -1142,37 +1192,27 @@ build/tests/qtest/dw-ssi-test \
 TMPDIR=/tmp/qemu-k230-qtest-v2-step4 \
 QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
 build/tests/qtest/k230-dw-ssi-test \
-  -p /k230-dw-ssi/idma -v
+  -p /k230-dw-ssi/register-contract -v
 ```
 
 ### 10.3 `has-xip`
 
 #### 失败测试
 
-`/dw-ssi/capability/xip-off`：
+`/dw-ssi/capability/xip-off` 和 `/dw-ssi/config/invalid/xip-reserved`：
 
 - `XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 和 XIP 扩展寄存器全部 RAZ/WI；
 - QMP `qom-list /machine/dw-ssi` 中没有名为 `designware-ssi.xip[0]`、类型为 `child<memory-region>` 的条目；
-- 调用 `qtest_set_irq_in(qts, "/machine/dw-ssi", "xip-enable", 0, 1)` 后仍无 XIP region，专用寄存器与数据路径不产生可见效果；
 - system reset 后行为不变。
-
-`/dw-ssi/capability/xip-on-resource`：
-
-- 使用 `has-xip=on,xip-window-size=16M`；
-- QMP `qom-list /machine/dw-ssi` 中存在 `designware-ssi.xip[0]`，类型为 `child<memory-region>`；
-- 测试 machine 能映射 region 1；
-- XIP 未 enable 时读取测试窗口返回 0；
-- 本测试不挂 Flash，不替代 K230 的完整 XIP transaction 正路径。
-
-`designware-ssi.xip[0]` 不是推测名称：当前源码以 `TYPE_DW_SSI ".xip"` 调用 `memory_region_init_io()`，并已用当前构建的 QMP `qom-list` 复核。测试按 `name` 和 `type` 搜索 QList 条目，不依赖返回顺序。
+- 设置 `has-xip=true` 后 realize 失败，错误包含 `has-xip is reserved for a follow-up series`；
+- `has-xip=false,xip-window-size!=0` 也必须失败；
+- device 不注册 `xip-enable` GPIO，K230 不映射 region 1。
 
 #### 最小实现
 
-- `realize()` 条件创建第二个 MemoryRegion；
 - 专用 XIP 寄存器分组 RAZ/WI；
-- GPIO handler 在 capability 关闭时保持 `xip_enabled=false`；
-- K230 只映射 FMC region 1；
-- 不改变 XIP write 与未实现扩展的现有边界。
+- realize 对 `has-xip=true` 和非零 `xip-window-size` 返回明确错误；
+- 第一批删除 XIP GPIO、第二个 MemoryRegion 和 K230 `0xc0000000` 映射。
 
 #### 正路径回归
 
@@ -1183,20 +1223,17 @@ build/tests/qtest/dw-ssi-test \
   -p /dw-ssi/capability/xip-off -v
 TMPDIR=/tmp/qemu-k230-qtest-v2-step4 \
 QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
-build/tests/qtest/dw-ssi-test \
-  -p /dw-ssi/capability/xip-on-resource -v
-TMPDIR=/tmp/qemu-k230-qtest-v2-step4 \
-QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
 build/tests/qtest/k230-dw-ssi-test \
-  -p /k230-dw-ssi/xip-read-window -v
+  -p /k230-dw-ssi/register-contract -v
 ```
 
 ### Step 4.3 完成标准
 
-- 三个 capability 都有 `false` 负路径；
-- K230 对应正路径仍通过；
-- capability 关闭时寄存器、IRQ、状态、数据路径和资源行为均有断言；
-- 每项 capability 可单独 review，不依赖下一项修复前一项。
+- 三个 capability 都有 `false` 行为测试和 `true` realize 拒绝测试；
+- K230 三实例均为 capability 全关、layout 为 `internal-axi`；
+- layout-visible DMA 寄存器可读写，但无 engine、guest memory 和 DONE/AXIE 行为；
+- 无 XIP GPIO、region 1 和 `0xc0000000` 映射；
+- 后续 series 可以逐项删除 reserved 检查，不需要修改 `max-lines` 或 DMA register layout 设计。
 
 ---
 
@@ -1204,53 +1241,33 @@ build/tests/qtest/k230-dw-ssi-test \
 
 ### 11.1 最小配置 equality
 
-QOM properties 在 realize 前确定，和 machine type/profile 一起由源端、目的端分别创建。它们不作为 guest 可变状态迁移，但以下两项会改变动态状态的解释，必须作为 equality guard 放在依赖字段之前：
+QOM properties 在 realize 前确定，和 machine type/profile 一起由源端、目的端分别创建。它们不作为 guest 可变状态迁移，但以下三项会改变动态状态或寄存器存储的解释，必须作为 equality guard 放在依赖字段之前：
 
 ```c
 VMSTATE_UINT32_EQUAL(cfg.fifo_depth, DwSsiState),
 VMSTATE_UINT32_EQUAL(cfg.capabilities, DwSsiState),
+VMSTATE_UINT32_EQUAL(cfg.dma_register_layout, DwSsiState),
 ```
 
-`VMSTATE_FIFO32` 使用目的端已经创建的 FIFO capacity 解释数据，因此 `fifo-depth` 不一致必须拒绝。capability profile 决定寄存器、IRQ 和活动数据路径是否存在，也必须整体一致。`num-cs`、ID、VERSION、reset 值和 `xip-window-size` 不在本步增加 equality：K230 machine 已固定这些配置，它们也不改变当前 VMState 字段的内存解释。
+`VMSTATE_FIFO32` 使用目的端已经创建的 FIFO capacity 解释数据，因此 `fifo-depth` 不一致必须拒绝。capability profile 决定功能边界；`dma-register-layout` 决定同一 offset 的寄存器含义，二者也必须一致。`num-cs`、ID、VERSION、reset 值和 `xip-window-size` 不在本步增加 equality：K230 machine 已固定这些配置，且第一批 `xip-window-size` 只能为 0。
 
-### 11.2 保持 VMState 字段列表稳定
+### 11.2 第一批只迁移已实现状态
 
-Step 4 不按 capability 条件删除以下字段：
+第一批 VMState 只保存：
 
 - `regs[]`；
 - TX/RX FIFO；
-- `idma_completed_frames`；
-- enhanced command/phase；
-- `xip_enabled`。
+- Standard PIO phase/remaining frames；
+- IRQ latch；
+- active CS 和其他基础状态。
 
-这样 K230 三实例虽然 capability 不同，仍使用同一 VMState schema。reset 负责清空 absent capability 的正常状态；post-load 只验证迁移状态，不通过静默清零掩盖配置或状态冲突：
+第一批不提前保存 enhanced command、`idma_completed_frames`、DMA engine phase 或 `xip_enabled`。后续 series 增加对应功能时，通过 VMState version/subsection 加入新增运行时字段，不把未实现状态预埋到第一批 schema。
 
-```c
-static int dw_ssi_validate_loaded_state(DwSsiState *s)
-{
-    if (!dw_ssi_has_capability(s, DW_SSI_CAP_ENHANCED_SPI) &&
-        (s->phase >= DW_SSI_PHASE_ENHANCED_INSTRUCTION ||
-         s->remaining_frames != 0)) {
-        return -EINVAL;
-    }
-    if (!dw_ssi_has_capability(s, DW_SSI_CAP_IDMA) &&
-        (s->idma_completed_frames != 0 ||
-         (s->irq_latched & (R_RISR_DONER_MASK |
-                            R_RISR_AXIER_MASK)))) {
-        return -EINVAL;
-    }
-    if (!dw_ssi_has_capability(s, DW_SSI_CAP_XIP) && s->xip_enabled) {
-        return -EINVAL;
-    }
-    return 0;
-}
-```
-
-TXU 不在 IDMA 冲突检查中，因为它是基础 TX FIFO underflow 状态。`dw_ssi_post_load()` 在现有 phase、active CS 范围检查后调用该函数；全部验证通过后再恢复 CS 和 IRQ 电平。
+TXU 属于基础 TX FIFO underflow 状态，继续保存在基础 IRQ latch 中。DONE/AXIE 位第一批始终无效；保存前应保证它们为 0，加载时若迁移流包含不可能出现的位则返回 `-EINVAL`，不能静默接受损坏状态。
 
 ### 11.3 兼容性结论
 
-当前 V2 分支尚未上游发布，Step 4 不承诺与未发布中间态进行跨版本迁移。Plan Final 在最终 schema 中加入两项 equality，但不按 capability 增加条件字段，也不把全部 cfg 参数塞进迁移流。测试只覆盖同 profile 成功、FIFO 深度不一致失败、capability profile 不一致失败三种必要情况。
+当前 V2 分支尚未上游发布，Step 4 不承诺与未发布中间态进行跨版本迁移。Plan Final V1.1 加入三项 equality，不把全部 cfg 参数塞进迁移流。测试覆盖同 profile 成功、FIFO 深度不一致失败、capability profile 不一致失败、DMA layout 不一致失败四种必要情况。
 
 ---
 
@@ -1258,27 +1275,29 @@ TXU 不在 IDMA 冲突检查中，因为它是基础 TX FIFO underflow 状态。
 
 | 测试路径 | 配置 | 核心断言 |
 |---|---|---|
-| `/dw-ssi/config/defaults` | 默认通用实例 | property 默认值保持当前行为 |
+| `/dw-ssi/config/defaults` | 默认通用实例 | capability 全关、DMA layout=none、只支持 Standard PIO/IRQ |
 | `/dw-ssi/config/fifo-depth` | `fifo-depth=8` | 8 帧满，第 9 帧不增长，阈值边界，reset 清空 |
 | `/dw-ssi/config/invalid/*` | `-preconfig` 下每个路径一个非法组合 | QMP `realized=true` 返回精确配置错误 |
-| `/dw-ssi/capability/enhanced-off` | enhanced/idma/xip 全关 | enhanced 寄存器 RAZ/WI，Standard PIO 正常 |
-| `/dw-ssi/capability/idma-off` | enhanced 开、IDMA/XIP 关 | IDMA 寄存器 RAZ/WI，DONE/AXIE 无效；制造 TX FIFO underflow 后 TXU 仍可见 |
-| `/dw-ssi/capability/xip-off` | enhanced/IDMA 开、XIP 关 | XIP 寄存器 RAZ/WI，无第二 region |
-| `/dw-ssi/capability/xip-on-resource` | XIP 开、16 MiB | 创建并映射第二 region，未 enable 读 0 |
-| `/dw-ssi/migration/same-profile` | 相同 FIFO/capability | 迁移成功，FIFO、寄存器和 IRQ 状态恢复 |
+| `/dw-ssi/config/invalid/*-reserved` | 分别设置 capability=true | realize 拒绝并返回 follow-up series 错误 |
+| `/dw-ssi/layout/none` | DMA layout=none | DMA 配置地址 RAZ/WI |
+| `/dw-ssi/layout/external` | DMA layout=external | DMACR/DMATDLR/DMARDLR 按 mask 存储，无 DMA request |
+| `/dw-ssi/layout/internal-axi` | DMA layout=internal-axi、IDMA=false | AXI/IDMA 配置寄存器存储，无 guest memory/DONE/AXIE |
+| `/dw-ssi/capability/enhanced-off` | max-lines=4、enhanced=false | SPI_FRF 保持 Standard，SPI_CTRLR0 reset 可见，Standard PIO 正常 |
+| `/dw-ssi/capability/idma-off` | internal-axi、IDMA=false | layout-visible 寄存器可读写，DONE/AXIE 无效，TXU 仍可见 |
+| `/dw-ssi/capability/xip-off` | XIP=false、window=0 | XIP-only 寄存器 RAZ/WI，无 GPIO和第二 region |
+| `/dw-ssi/migration/same-profile` | 相同 FIFO/capability/layout | 迁移成功，FIFO、寄存器和 IRQ 状态恢复 |
 | `/dw-ssi/migration/fifo-depth-mismatch` | 8 → 16 | equality 拒绝迁移 |
 | `/dw-ssi/migration/capability-mismatch` | capability profile 不同 | equality 拒绝迁移 |
-| `/k230-dw-ssi/enhanced-xip-isolation` | 普通 `0xeb` + 非零 XIP fields | ordinary enhanced 忽略 XIP mode fields，数据不偏移 |
-| `/k230-dw-ssi/idma-quad-io` | SDK 风格 `0xeb` IDMA | mode/dummy 只由 `WAIT_CYCLES` 表达，数据正确 |
+| `/dw-ssi/migration/dma-layout-mismatch` | external → internal-axi | equality 拒绝迁移 |
 | `/k230-dw-ssi/register-contract` | K230 三实例 | 完整 reset profile、SER 位宽、properties |
 | `/k230-dw-ssi/fifo-depth` | K230 256 深度 | 256 帧满，第 257 帧不增长 |
-| `/k230-dw-ssi/qspi-config` | FMC enhanced 配置 | 非法 Octal/DDR 仍拒绝，Quad SDR 正常 |
-| `/k230-dw-ssi/idma` | FMC IDMA | DONE/AXIE 正负路径保持通过 |
-| `/k230-dw-ssi/xip-read-window` | FMC XIP 128 MiB | enable 前 0，enable 后 Flash 数据，窗口和 PIO 并存 |
-| `/k230-dw-ssi/hi-sys` | K230 HI_SYS | mode/sleep 和 XIP enable GPIO 连接不回退 |
+| `/k230-dw-ssi/profile-capabilities` | K230 三实例 | max-lines=4/4/8、internal-axi、capability 全 false、window=0 |
+| `/k230-dw-ssi/standard-flash` | M25P80-compatible NOR | Standard 1-1-1 JEDEC ID/固定地址读取，不访问 XIP aperture |
 | K230 WDT qtest | K230 SoC | SSI 资源数量变化不破坏其他设备 realize/mapping |
 
-系统 reset 后至少重新运行：三实例 reset profile、FIFO 清空、capability RAZ/WI、FMC XIP enable 默认低电平。
+系统 reset 后至少重新运行：三实例 reset profile、FIFO 清空、capability false 语义、DMA layout readback 和 Standard Flash 访问。
+
+Step 4.0 的 enhanced/XIP 隔离与 IDMA `0xeb` 测试属于当前 V2 中间态的已完成回归，不进入第一批最终 patch。后续 enhanced/IDMA series 恢复对应功能时必须同时恢复这两项测试，且 `XIP_MODE_BITS` 仍保持 XIP-only。
 
 ---
 
@@ -1311,7 +1330,7 @@ QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
 build/tests/qtest/k230-wdt-test -v
 ```
 
-成功标准：通用测试全部 PASS；K230 当前 12 项加新增 profile/FIFO 测试全部 PASS；WDT qtest PASS；无 FAIL/ERROR/SKIP。
+成功标准：第一批通用配置/layout/PIO/IRQ/迁移测试全部 PASS；K230 三实例 profile、PLIC、Standard Flash 测试全部 PASS；WDT qtest PASS；无 FAIL/ERROR/SKIP。当前 V2 中间态的 enhanced/IDMA/XIP 测试不计入第一批通过口径。
 
 ### 13.3 公共头文件独立包含
 
@@ -1356,44 +1375,45 @@ scripts/checkpatch.pl -f tests/qtest/k230-dw-ssi-test.c
 
 ### Step 4.1：配置骨架
 
-- [ ] 新增 `DwSsiConfig`，把 `num_cs`、`max_lines` 和内部 `capabilities` 收入 `cfg`
-- [ ] 增加全部 QOM properties 和兼容默认值
+- [ ] 新增 `DwSsiConfig`，把 `num_cs`、`max_lines`、`dma_register_layout` 和内部 `capabilities` 收入 `cfg`
+- [ ] 通用默认 capability 全 false、DMA layout=none
 - [ ] 增加 `dw_ssi_validate_config()`
 - [ ] 增加独立 `dw-ssi-test` machine、Meson 注册与 qtest
 - [ ] 非法配置按 case 使用 `-preconfig` + QMP realize error 验证
 - [ ] FIFO 按 `fifo-depth` 在 realize 创建
 - [ ] 所有 FIFO 容量与阈值逻辑改用 `cfg.fifo_depth`
 - [ ] 保留 finalize 统一销毁 FIFO 和动态 CS 数组
-- [ ] reset 从 `cfg` 读取，默认行为不变
-- [ ] 增加 `fifo-depth` 和 `capabilities` 两项 VMState equality
-- [ ] 同 profile 迁移成功，FIFO/capability 不一致迁移失败
-- [ ] 通用 config qtest 与 K230 12 项回归通过
+- [ ] reset 从 `cfg` 和 DMA layout 读取，`SPI_CTRLR0` 保留 profile reset
+- [ ] 增加 `fifo-depth`、`capabilities`、`dma-register-layout` 三项 VMState equality
+- [ ] 同 profile 迁移成功，FIFO/capability/layout 不一致迁移失败
+- [ ] capability=true 的三条 reserved realize error 通过
 
 ### Step 4.2：K230 profile
 
 - [ ] 在 `k230.c` 增加三实例完整 profile
 - [ ] 三实例 realize 前显式设置全部 property
 - [ ] 删除 `max_lines == 8` 推断 FMC reset
-- [ ] QSPI0/QSPI1 不映射 XIP region，profile 显式设置 `has-xip=false`
-- [ ] FMC profile 设置 128 MiB XIP window，并把现有 region 1 映射到 `0xc0000000`
-- [ ] 三实例 reset、SER、FIFO、property 测试通过
+- [ ] 三实例 `max-lines=4/4/8`、layout=`internal-axi`、capability 全 false、window=0
+- [ ] 删除全部 XIP region 映射和 HI_SYS `xip-enable` GPIO 连接
+- [ ] 三实例 reset、SER、FIFO、layout/property 测试通过
 
 ### Step 4.3：capability
 
-- [ ] `has-enhanced-spi=false` 的 RAZ/WI 与 Standard PIO 负路径通过
-- [ ] `has-idma=false` 的寄存器、状态、guest memory、IRQ 负路径通过
+- [ ] `has-enhanced-spi=false` 时 `max-lines=4/8` 可 realize，SPI_FRF 保持 Standard
+- [ ] `SPI_CTRLR0` profile reset 可见，扩展写入不进入数据路径
+- [ ] DMA layout 决定寄存器存在性，`has-idma` 不隐藏 layout-visible 寄存器
+- [ ] `has-idma=false` 时无 guest memory 访问和 engine 行为
 - [ ] `has-idma=false` 时 DONE/AXIE 无效，但 TXU 仍可产生和上报
-- [ ] `has-xip=false` 的寄存器、GPIO、region 负路径通过
-- [ ] `has-xip=true` 的资源创建和 K230 XIP 正路径通过
-- [ ] QSPI0/QSPI1 最终不创建 region 1，FMC 按 128 MiB property 创建 region 1
-- [ ] 三项门控分别完成局部与完整回归
+- [ ] `has-xip=false` 时 XIP-only 寄存器 RAZ/WI，无 GPIO、region 1 和地址映射
+- [ ] 三项 capability=true 均拒绝 realize
+- [ ] Standard 1-1-1 Flash 挂接和读取测试通过
 
 ### Step 4.4：收敛
 
 - [ ] 通用 qtest、K230 SSI qtest、K230 WDT qtest 全过
 - [ ] 公共头文件独立包含通过
 - [ ] 通用 SSI 无 K230 依赖
-- [ ] VMState 字段列表不按 capability 分叉，post-load 对冲突状态返回错误而非静默 sanitize
+- [ ] VMState 只保存已实现的 Standard PIO/IRQ 状态，不预埋 enhanced/IDMA/XIP 字段
 - [ ] `git diff --check` 与相关 checkpatch 通过
 - [ ] 每个小目标的未来 patch 归属明确
 
@@ -1416,28 +1436,30 @@ K230 machine
   ├── 创建三个 SSI 实例
   ├── 显式设置基础 profile
   ├── 映射控制器 MMIO
-  └── 把 IRQ 输出连接到 PLIC
+  ├── 把 9 路 IRQ 输出连接到 PLIC
+  └── 挂接 Standard 1-1-1 SPI NOR
 ```
 
-这批 series 的核心 review 问题只有两个：
+这批 series 的核心 review 问题有三个：
 
 1. `dw_ssi.c` 是否已经成为不依赖 K230 类型、地址和 HI_SYS 的通用设备模型；
-2. K230 是否只负责实例配置、地址映射和 PLIC 接线。
+2. DMA register layout 与 enhanced/IDMA/XIP engine capability 是否真正正交；
+3. K230 是否只负责实例配置、地址映射、PLIC 接线和 Flash 挂接。
 
-第一批不以 SDK U-Boot 从 SPI NOR 启动作为合入条件，因为 SPI NOR、enhanced SPI 和 IDMA 不在本批范围。完成标准是通用寄存器/FIFO/PIO/IRQ qtest 与 K230 实例/PLIC 集成 qtest 全部通过。
+第一批包含 Standard 1-1-1 SPI NOR 挂接，但不以 SDK U-Boot 完整启动作为合入条件，因为现有启动链还会使用 enhanced SPI 和 IDMA。完成标准是通用寄存器/layout/FIFO/PIO/IRQ qtest、K230 实例/PLIC 集成 qtest 和 Standard Flash 读取测试全部通过。
 
 ### 15.2 第一批包含和不包含的内容
 
 | 类别 | 第一批包含 | 第一批不包含 |
 |---|---|---|
 | 通用设备 | `TYPE_DW_SSI`、SSI bus、控制器 region 0、CS outputs、realize/finalize、reset、基础 VMState | K230 wrapper、HI_SYS 指针、K230 地址常量 |
-| 配置 | `num-cs`、`fifo-depth`、`component-id`、`version-id`、`imr-reset` 及必要校验 | `max-lines`、`spi-ctrlr0-reset`、AXI burst reset、enhanced/IDMA/XIP capability properties |
-| 数据路径 | Standard single-line SPI，四种 TMOD、frame width、loopback、FIFO level/status | Dual/Quad/Octal、enhanced command、SPI NOR、IDMA、XIP transaction |
+| 配置 | 完整 `DwSsiConfig`、`max-lines`、DMA layout、profile reset、三项 reserved capability property | capability=true 的正路径 |
+| 数据路径 | Standard single-line SPI，四种 TMOD、frame width、loopback、FIFO level/status、Standard 1-1-1 NOR | Dual/Quad/Octal、enhanced command、IDMA、XIP transaction |
 | IRQ | TXE、TXO、RXF、RXO、TXU、RXU、MST 的基础语义和 K230 PLIC 路由 | DONE/AXIE 的产生和清除逻辑 |
-| 资源 | 固定控制器 MMIO、SSI bus、CS 和 IRQ 接口 | XIP region、`xip-enable` GPIO、Flash attachment |
-| 测试 | 通用寄存器/PIO/IRQ 测试，K230 三实例 profile、MMIO 和 PLIC 隔离测试 | enhanced、Flash、IDMA、HI_SYS、XIP 正负路径 |
+| 资源 | 控制器 MMIO、SSI bus、CS、9 路 IRQ、Flash attachment | XIP region、`xip-enable` GPIO |
+| 测试 | 通用寄存器/layout/PIO/IRQ，K230 三实例、PLIC、Standard Flash | enhanced、IDMA、HI_SYS、XIP 正路径 |
 
-`TXU` 属于基础 TX FIFO underflow，必须随第一批 IRQ 一起实现。DONE、AXIE 属于 IDMA；为保持 K230 物理接线和 QOM GPIO output 数量稳定，可以在第一批注册并路由完整 9 路输出，但 DONE/AXIE 必须恒低，其 IMR/ISR/RISR 位在 IDMA series 到来前不得表现为有效功能。
+`TXU` 属于基础 TX FIFO underflow，必须随第一批 IRQ 一起实现。最终选择 5.4-A：第一批固定注册并路由完整 9 路输出；DONE/AXIE 必须恒低，其 IMR/ISR/RISR 位在 IDMA series 到来前不得表现为有效功能。
 
 ### 15.3 “寄存器占位但不提供功能”的精确定义
 
@@ -1445,29 +1467,31 @@ K230 machine
 
 1. **地址空间占位**：region 0 大小保持稳定；未实现 offset 统一 RAZ/WI，不为每个未来寄存器增加空 case；
 2. **基础寄存器真实实现**：Standard PIO、FIFO、状态、基础 IRQ、IDR/VERSION 所依赖的寄存器必须具有明确 reset、write mask 和副作用；
-3. **扩展寄存器不伪装功能**：`SPI_CTRLR0` 扩展字段、internal DMA/AXI、XIP 专用寄存器在对应 series 前不进入有效数据路径；
+3. **layout 与 engine 分离**：`dma-register-layout` 决定 external/internal-axi 寄存器是否存在和如何读写，`has-idma` 只决定 engine、guest memory 和事件；
 4. **有证据才暴露非零契约**：如果 firmware 枚举确实需要读取某个扩展寄存器 reset，可以单独实现只读/reset 语义并写测试，但 commit message 必须声明“寄存器可见不等于数据路径已实现”；
-5. **不提前增加未来 property**：property 随首次使用它的功能 patch 引入，避免 Patch 1 出现没有消费者的 capability scaffolding。
+5. **capability 不虚假开放**：第一批保留 capability property 时，任何 `true` 均明确拒绝；若上游拒绝无正路径 property，则在投稿重组时把 public property 整体后移，不能静默接受；
+6. **XIP-only 保持专用**：`XIP_MODE_BITS` 第一批 RAZ/WI，后续 IDMA series 也不得把它改为 shared 或重新用于 1-4-4 mode byte。
 
-因此，“先占位”推荐表达为：**MMIO aperture 已存在，未实现扩展 offset RAZ/WI**；不推荐提前复制完整寄存器表、写入全部 K230 reset 值，却让实际功能留到数个 series 之后。
+因此，“先占位”精确表达为：**版图存在性由 profile/layout 决定，寄存器兼容性不等于数据路径实现；纯扩展 offset 在 capability 未开放时 RAZ/WI。**
 
 ### 15.4 第一批仍需具备的通用基础
 
 除了 PIO 和 IRQ，第一批还需要以下基础，否则“通用 DW SSI”拆分仍不完整：
 
-- `DwSsiConfig` 的第一批最小子集和 realize 前配置校验；
+- 完整 `DwSsiConfig`、DMA register layout 和 realize 前配置校验；
 - FIFO、CS 动态资源的明确创建和销毁生命周期；
-- 基础 VMState：寄存器、FIFO、PIO phase、remaining frames、IRQ latch、active CS；
+- 基础 VMState：寄存器、FIFO、PIO phase、remaining frames、IRQ latch、active CS，以及 FIFO/capability/layout equality；
 - 固定且有文档说明的 SSI bus、CS output 和 IRQ output 接口；
 - 通用 qtest 载体，用于证明 PIO/IRQ 语义不依赖 K230 machine；
 - K230 集成 qtest 只验证三实例 profile、地址映射、PLIC source 和实例隔离，避免与通用测试重复；
+- Standard 1-1-1 Flash 测试提供真实 SSI consumer；
 - 非法 `num-cs`、`fifo-depth` 等配置在 realize 阶段返回清晰错误。
 
-第一批不需要 trace events、SPI NOR 或启动镜像。trace 可以随对应功能加入，避免单独增加只为调试服务的 review 面积。
+第一批不需要 trace events 或启动镜像。trace 可以随对应功能加入，避免单独增加只为调试服务的 review 面积。
 
 ### 15.5 第一批 Commit 顺序
 
-第一批建议保持五个可编译、可回归的提交，每个提交只增加一类职责：
+最终选择 5.6-A：第一批保持六个可编译、可回归的提交，每个提交只增加一类职责：
 
 1. `hw/ssi: Add a Synopsys DesignWare SSI standard register model`
    - 建立通用 QOM 类型、最小配置、基础寄存器、reset、VMState 和通用 register qtest；
@@ -1479,18 +1503,22 @@ K230 machine
    - 实现基础 raw/masked/clear 语义、threshold IRQ 和通用 IRQ qtest；
 5. `hw/riscv/k230: Route SSI interrupts to the PLIC`
    - 完成三实例 PLIC 接线和路由隔离 qtest。
+6. `hw/riscv/k230: Attach a standard SPI flash to the K230 SSI`
+   - 保留 `spi-flash` property，挂接 M25P80-compatible NOR，并增加 Standard 1-1-1 读取测试。
 
 测试应跟随首次实现该行为的 commit，不把所有测试集中到最后一个 patch。每个 commit 完成后至少执行增量构建、对应定向 qtest 和 `git diff --check`；完成整个 series 后再运行完整通用/K230 qtest。
 
-本地开发 commit 可以按 Step 4.0、4.1、4.2 等小目标逐步积累；发送上游前再重组到上述五个职责提交。Step 4.0 当前提交属于本地纠错历史：第一批 series 不包含 enhanced/IDMA，因此不需要单独携带这个修复 patch；后续 enhanced/IDMA series 应从首次出现开始就是正确实现，不能先引入错误 mode phase 再补修复。
+本地开发 commit 可以按 Step 4.0、4.1、4.2 等小目标逐步积累；发送上游前再重组到上述六个职责提交。Step 4.0 当前提交属于本地纠错历史：第一批 series 不包含 enhanced/IDMA，因此不需要单独携带这个修复 patch；后续 enhanced/IDMA series 应从首次出现开始就是正确实现，不能先引入错误 mode phase 再补修复。
 
 ### 15.6 后续 Series
 
 第一批合入或架构 review 基本稳定后，再顺序发送：
 
-1. enhanced SPI + `max-lines` / `spi-ctrlr0-reset` + SPI NOR；
-2. optional internal DMA + AXI 配置 + DONE/AXIE；
+1. enhanced SPI 数据路径，在已有 `max-lines` / `spi-ctrlr0-reset` / NOR 挂接上增加 Dual/Quad SDR；
+2. optional internal DMA engine + guest memory 搬运 + DONE/AXIE；
 3. K230 HI_SYS + optional XIP region、GPIO 和 XIP transaction。
+
+IDMA series 必须恢复 SDK 风格 `0xeb` 1-4-4 回归，并保持 `XIP_MODE_BITS` 为 XIP-only；dummy/mode 不得重新耦合。
 
 后续 series 不应同时并发发送，否则 reviewer 同一时间仍需理解完整三千余行改动，失去分批投稿的意义。
 
@@ -1502,15 +1530,17 @@ Step 4 的实现内容在第五步重组时按职责回填，不形成一个覆�
 
 | Step 4 内容 | 最终 patch 归属 |
 |---|---|
-| `DwSsiConfig`、基础 properties、配置校验、通用测试 machine | Patch 1：通用寄存器模型与基础配置 |
+| `DwSsiConfig`、DMA layout、reserved capability properties、配置校验、通用测试 machine | Patch 1：通用寄存器模型与基础配置 |
 | K230 三实例 profile、控制器 MMIO | Patch 2：K230 实例化通用控制器 |
 | 动态 FIFO 深度 | Patch 3：FIFO/PIO |
 | 动态 IRQ mask 的基础部分 | Patch 4：通用 IRQ |
-| `has-enhanced-spi` 门控 | Patch 6：enhanced SPI |
-| `has-idma` 门控 | Patch 8：optional IDMA |
-| `has-xip`、可选 region、K230 `0xc0000000` 映射 | Patch 10：optional XIP |
+| K230 9 路 PLIC 路由 | Patch 5：PLIC 集成 |
+| Standard 1-1-1 Flash 挂接 | Patch 6：K230 Flash integration |
+| 删除 `has-enhanced-spi` reserved 检查并实现正路径 | 后续 enhanced SPI series |
+| 删除 `has-idma` reserved 检查并实现 engine | 后续 optional IDMA series |
+| 删除 `has-xip` reserved 检查、增加 region/GPIO/`0xc0000000` | 后续 optional XIP series |
 
-每个最终 patch 必须包含自己需要的 property、测试和 machine 配置，不允许 Patch 8 或 Patch 10 修复 Patch 1 已经引入的不可编译/不可 realize 中间态。
+每个最终 patch 必须包含自己需要的 property、测试和 machine 配置；后续 enhanced/IDMA/XIP series 不得修复第一批已经引入的不可编译、不可 realize 或虚假 capability 中间态。
 
 ---
 
@@ -1522,12 +1552,12 @@ Step 4 的实现内容在第五步重组时按职责回填，不形成一个覆�
 - [K230 TRM 原始文本](../reference/K230_Technical_Reference_Manual_V0.3.1_20241118.txt)
 - [TRM 12.3 中文对照](../spi/reference/k230-trm-12.3-spi-cn.md)
 - [寄存器审计](../spi/k230-spi-qspi-register-audit.md)
-- [当前 DW SSI 头文件](../../../qemu-camp-2026-k230/include/hw/ssi/dw_ssi.h)
-- [当前 DW SSI 模型](../../../qemu-camp-2026-k230/hw/ssi/dw_ssi.c)
-- [当前 K230 machine](../../../qemu-camp-2026-k230/hw/riscv/k230.c)
-- [当前 K230 SSI qtest](../../../qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)
-- [QEMU DesignWare I3C 先例](../../../qemu-camp-2026-k230/hw/i3c/dw-i3c.c)
-- [QEMU Xilinx QSPI 线性窗口先例](../../../qemu-camp-2026-k230/hw/ssi/xilinx_spips.c)
+- [当前 DW SSI 头文件](../../../my-qemu-camp-2026-k230/include/hw/ssi/dw_ssi.h)
+- [当前 DW SSI 模型](../../../my-qemu-camp-2026-k230/hw/ssi/dw_ssi.c)
+- [当前 K230 machine](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c)
+- [当前 K230 SSI qtest](../../../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)
+- [QEMU DesignWare I3C 先例](../../../my-qemu-camp-2026-k230/hw/i3c/dw-i3c.c)
+- [QEMU Xilinx QSPI 线性窗口先例](../../../my-qemu-camp-2026-k230/hw/ssi/xilinx_spips.c)
 - [K230 U-Boot DTS](../../../k230_sdk/src/little/uboot/arch/riscv/dts/k230.dtsi)
 - [K230 Linux DTS](../../../k230_sdk/src/little/linux/arch/riscv/boot/dts/kendryte/k230.dtsi)
 - [K230 U-Boot DesignWare SPI 驱动](../../../k230_sdk/src/little/uboot/drivers/spi/designware_spi.c)
