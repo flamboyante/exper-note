@@ -2,19 +2,21 @@
 
 首次记录：2026-07-28
 
-修订：2026-07-29（同步 Step 4 最终计划与当前 V2 检查点）
+修订：2026-07-30（同步 Step 4.0 完成状态和第一批上游 series 边界）
 
 本文是 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 第 13 节的实施细化，不重复架构结论，只规定执行顺序、检查点和注意点。
 
-## 当前检查点（2026-07-29）
+## 当前检查点（2026-07-30）
 
 | 项目 | 当前状态 |
 |---|---|
 | V2 开发分支 | `k230-V2-patch-spi` |
-| 当前 HEAD | `189638cdf4` |
+| 当前 HEAD | `c689ac865f` |
 | Step 1 / Step 2 | 已完成并通过编译与 K230 SSI qtest |
 | Step 3 | 已完成 HI_SYS 反向依赖解耦；通用 SSI 使用 `xip-enable` GPIO input |
-| Step 4 Plan Final | [实例配置与 capability 最终实施计划](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 已完成；源码尚未实施 |
+| Step 4 Plan Final | [实例配置与 capability 最终实施计划](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 已完成；Step 4.0 已实施并通过 12 项 K230 SSI qtest |
+
+完整 Step 4 本地终态和第一批上游投稿范围分开管理：本地继续完成 Step 4.1 至 Step 4.4；第一批上游 series 只重组通用 DW SSI Standard SPI PIO、基础 IRQ、K230 三实例与 PLIC 集成，扩展能力后续分批发送。
 
 下文第一步至第三步保留最初路线和历史检查点；执行 Step 4 时以专门计划中的配置矩阵、TDD 顺序和命令为准。
 
@@ -82,7 +84,7 @@
 
 行为边界稳定后，按 [Step 4 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 分五个小目标实施：
 
-1. Step 4.0 先修正现有 ordinary enhanced/IDMA 对 XIP mode fields 的错误消费，普通事务固定为 instruction → address → dummy → data；
+1. Step 4.0 已完成：修正 ordinary enhanced/IDMA 对 XIP mode fields 的错误消费，普通事务固定为 instruction → address → dummy → data；
 2. 建立集中 `DwSsiConfig`、完整 properties、配置校验、动态 FIFO、通用测试机，以及 `fifo-depth`/capability profile 两项迁移 equality；
 3. 在 K230 machine 中应用 QSPI0、QSPI1、SPI-OPI/FMC 三实例完整 profile；
 4. 按 enhanced SPI → IDMA → XIP 的顺序逐项接入 capability 关闭语义；
@@ -157,7 +159,7 @@ if (logical_index == 0) {
 
 执行顺序已经在 Step 4 最终计划中收敛，不再按单个 property 零散提交：
 
-1. Step 4.0 先解除普通 enhanced/IDMA 与 XIP 的错误耦合，并增加 `0xeb` 四阶段回归；
+1. Step 4.0 已完成：解除普通 enhanced/IDMA 与 XIP 的错误耦合，并增加 `0xeb` 四阶段回归；
 2. Step 4.1 一次建立完整 property 契约、校验、动态 FIFO、兼容默认值和最小迁移 equality，但 capability 暂不改变寄存器可见性；
 3. Step 4.2 应用 K230 三实例 profile，先证明同一通用类型可表达 QSPI 与 FMC 差异；
 4. Step 4.3 依次门控 `has-enhanced-spi`、`has-idma`、`has-xip`，每项都有独立负路径和 K230 正路径回归；

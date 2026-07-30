@@ -1,6 +1,6 @@
 # QEMU Camp 2026 工作区状态
 
-最后更新：2026-07-29
+最后更新：2026-07-30
 
 本页是工作区当前主题、实施阶段和下一步的唯一状态入口。新的 agent 先读根目录 `AGENTS.md`，再读本页；不要用目录名、历史分支或聊天记录推断当前优先级。
 
@@ -8,10 +8,10 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 阶段 | V2 Step 1 至 Step 3 已完成；Step 4 Plan Final（现有数据路径纠错、实例配置与 capability）已完成，源码尚未实施。 |
+| 阶段 | V2 Step 1 至 Step 3 已完成；Step 4.0 数据路径纠错已完成并通过 12 项 K230 SSI qtest；Step 4.1 至 Step 4.4 尚未实施。 |
 | V2 定义 | 新一轮大版本：将当前 K230 SSI 模型重构为通用 `DW_SSI` 与 K230 SoC 集成。 |
 | V1 基线 | V1 基线分支为 `k230-spiv3.4`；该分支和 `upstream-review/current/` 的 v3.4 材料均属于 V1。 |
-| V2 源码检查点 | 分支 `k230-V2-patch-spi`，HEAD `189638cdf4`；Step 1 至 Step 3 已落地，工作树在本轮调研前干净。 |
+| V2 源码检查点 | 分支 `k230-V2-patch-spi`，HEAD `c689ac865f`；Step 4.0 已删除普通 enhanced mode phase 和 IDMA 1-4-4 XIP 特判。 |
 | 架构决策 | [K230 SPI/QSPI 上游 Review 与 V2 重构决策](./k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md)；这是 V2 唯一决策入口。 |
 | 当前计划 | [Step 4 Plan Final：实例配置与 capability 门控](./k230/upstream-review/k230-spi-qspi-v2-step4-plan-final-instance-configuration.md)。 |
 | 当前源码 | [通用 DW SSI 模型](../qemu-camp-2026-k230/hw/ssi/dw_ssi.c)、[K230 machine](../qemu-camp-2026-k230/hw/riscv/k230.c)。 |
@@ -20,7 +20,7 @@
 
 ### 下一步
 
-开始 Step 4 源码实施时，先读取 [Step 4 Plan Final](./k230/upstream-review/k230-spi-qspi-v2-step4-plan-final-instance-configuration.md)，从 Step 4.0 开始：先增加普通 enhanced/IDMA 与 XIP fields 隔离的失败测试，再删除普通 enhanced mode phase 和 IDMA 1-4-4 特判。Step 4.0 全部回归通过后，才进入 Step 4.1 的 `DwSsiConfig`、properties、配置校验、动态 FIFO、通用测试机和最小迁移 equality；随后按 enhanced SPI → IDMA → XIP 的顺序逐项门控。未经用户明确要求，不创建分支、不提交、不推送。
+下一步从 Step 4.1 开始：建立 `DwSsiConfig` 的完整本地终态、properties、配置校验、动态 FIFO、通用测试机和最小迁移 equality；随后按 enhanced SPI → IDMA → XIP 的顺序逐项门控。上游投稿与本地完整实施分开组织：第一批 series 只覆盖通用 DW SSI Standard SPI PIO、基础 IRQ、K230 三实例和 PLIC 集成，扩展寄存器在对应功能 series 前统一 RAZ/WI。commit 按单一职责逐步完成，发送前再重组；未经用户明确要求，不创建分支、不提交、不推送。
 
 ### 证据与范围闸门
 
