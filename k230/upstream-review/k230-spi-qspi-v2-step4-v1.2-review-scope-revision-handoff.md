@@ -2,7 +2,11 @@
 
 记录日期：2026-07-30
 
-> 本文是下一会话修改 Plan Final V1.2 的任务入口，不是新的架构决策文档。完成修订后，以更新后的 [Plan Final V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 为唯一执行计划，并将本文标记为已完成。
+完成状态：**已完成**（2026-07-30）
+
+产出：[Step 4 Plan Final V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md)
+
+> 本文现为历史 handoff 记录，不再是活动任务入口。V1.2 保留为修订基线，V1.3 是唯一执行计划。
 
 ## 1. 下一会话直接执行的任务
 
@@ -279,4 +283,3 @@ rg -n 'has-enhanced-spi|has-idma|has-xip|xip-window-size' \
 - 第一批 commit 顺序不存在“先实例化不可用设备、后补基本数据路径”的中间态；
 - 所有活动入口同步为同一结论；
 - 文档验证通过，未执行 commit 或 push。
-

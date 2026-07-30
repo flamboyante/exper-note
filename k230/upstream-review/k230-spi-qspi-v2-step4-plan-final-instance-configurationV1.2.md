@@ -1,5 +1,7 @@
 # K230 V2 第四步 Plan Final V1.2：实例配置与第一批 capability 边界
 
+> **历史方案：禁止作为实施依据。** 本文已由 [Step 4 Plan Final V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md) 取代。V1.3 删除第一批中没有当前消费者的内部 capability、DMA layout、DONE/AXIE 和 XIP future-proofing。
+
 首次记录：2026-07-29
 
 最终修订：2026-07-30（保留内部 capability 骨架，公共 capability property 随对应功能 series 引入）

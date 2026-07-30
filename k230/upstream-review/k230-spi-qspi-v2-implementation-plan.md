@@ -2,7 +2,7 @@
 
 首次记录：2026-07-28
 
-修订：2026-07-30（同步 Step 4.0 完成状态和第一批上游 series 边界）
+修订：2026-07-30（同步 Step 4 Plan Final V1.3 最小消费者范围）
 
 本文是 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 第 13 节的实施细化，不重复架构结论，只规定执行顺序、检查点和注意点。
 
@@ -14,9 +14,9 @@
 | 当前 HEAD | `c689ac865f` |
 | Step 1 / Step 2 | 已完成并通过编译与 K230 SSI qtest |
 | Step 3 | 已完成 HI_SYS 反向依赖解耦；通用 SSI 使用 `xip-enable` GPIO input |
-| Step 4 Plan Final | [实例配置与第一批 capability 边界 V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 已完成；Step 4.0 已实施并通过 12 项 K230 SSI qtest |
+| Step 4 Plan Final | [Standard PIO 第一批范围 V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md) 已完成；Step 4.0 已实施并通过 12 项 K230 SSI qtest |
 
-Step 4.1 至 Step 4.4 直接形成第一批上游投稿终态：内部 capability 骨架保留但固定为 0，public capability property 随对应功能后送。第一批重组通用 DW SSI Standard SPI PIO、基础 IRQ、DMA 配置寄存器兼容性、K230 三实例与 PLIC 集成，以及独立的 Standard 1-1-1 SPI NOR 挂接。
+Step 4.1 至 Step 4.4 直接形成第一批上游投稿终态：只保留有当前消费者的 Standard PIO/FIFO、七路基础 IRQ、K230 三实例/PLIC 和 Standard 1-1-1 SPI NOR。第一批不保留内部 future bit、DMA layout、DONE/AXIE、XIP GPIO 或额外 MMIO 资源。
 
 下文第一步至第三步保留最初路线和历史检查点；执行 Step 4 时以专门计划中的配置矩阵、TDD 顺序和命令为准。
 
@@ -82,33 +82,27 @@ Step 4.1 至 Step 4.4 直接形成第一批上游投稿终态：内部 capabilit
 
 ### 第四步：再引入实例配置
 
-行为边界稳定后，按 [Step 4 Plan Final V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 分五个小目标实施：
+行为边界稳定后，按 [Step 4 Plan Final V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md) 分五个小目标实施：
 
 1. Step 4.0 已完成：修正 ordinary enhanced/IDMA 对 XIP mode fields 的错误消费，普通事务固定为 instruction → address → dummy → data；
-2. 建立集中 `DwSsiConfig`、第一批 properties、配置校验、动态 FIFO、通用测试机，以及 `fifo-depth`/DMA layout 两项迁移 equality；
-3. 在 K230 machine 中应用 QSPI0、QSPI1、SPI-OPI/FMC 三实例完整 profile；
-4. 锁定 enhanced SPI、IDMA、XIP 内部 capability 位为 0 时的关闭语义；public property 随对应后续功能 series 引入；
-5. 完成构建、通用/K230 qtest、公共头文件、迁移边界和未来 patch 归属检查。
+2. 建立最小 `DwSsiConfig`、三项 properties、动态 FIFO/CS、通用测试机、Standard PIO 四种 TMOD 和 `fifo-depth` 迁移 equality；
+3. 注册并实现 TXE/TXO/RXF/RXO/TXU/RXU/MST 七路基础 IRQ；
+4. 在 K230 machine 中应用三实例最小 profile、映射 region 0、连接七路 PLIC，并删除第一批 XIP 接口；
+5. 挂接 Standard 1-1-1 Flash，完成构建、通用/K230 qtest、公共头文件、迁移边界和 patch 归属检查。
 
 第一批 property 集合为：
 
 - `fifo-depth`
 - `num-cs`
-- `max-lines`
-- `component-id`
-- `version-id`
 - `imr-reset`
-- `axiawlen-reset`
-- `axiarlen-reset`
-- `spi-ctrlr0-reset`
 
-`DwSsiConfig` 同时保留内部全零 capability 位图。`has-enhanced-spi`、`has-idma`、`has-xip` 和 `xip-window-size` public property 分别随 enhanced、IDMA、XIP 后续 series 引入；第一批不创建第二个 sysbus MMIO region。
+`DwSsiConfig` 第一批只包含 `num_cs`、`fifo_depth`、`imr_reset`。`max-lines`、DMA/IDMA、enhanced、XIP properties 和内部状态分别随对应后续功能 series 引入；第一批不创建 XIP GPIO 或第二个 sysbus MMIO region。
 
-XIP 寄存器边界按 TRM 最终裁决：`XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 均为 FMC XIP 专用寄存器，QSPI profile 下 RAZ/WI。TXU 属于基础 TX FIFO underflow IRQ，不随 `has-idma` 关闭；IDMA capability 只控制 DONE、AXIE。
+XIP 寄存器边界按 TRM 最终裁决：`XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 均为 FMC XIP 专用寄存器，第一批统一 RAZ/WI。TXU 属于基础 TX FIFO underflow IRQ；DONE/AXIE output 和状态全部随 IDMA series 引入。
 
-### 第五步：最后重组 v2 的 11 个提交
+### 第五步：最后重组第一批 5 个提交
 
-最终不能只在 3.4 顶部追加一个"大重构 patch"。应把通用化结果重新整理进 patch 1、3、4、6、8、10 等控制器内部提交，确保每个中间提交都能编译。
+最终不能只在 3.4 顶部追加一个“大重构 patch”。第一批按通用 Standard PIO、基础 IRQ、K230 实例、PLIC、Standard Flash 重组为 5 个提交；enhanced、DMA/IDMA、XIP 使用独立 follow-up series。
 
 ## 3. 执行注意点
 
@@ -156,12 +150,12 @@ if (logical_index == 0) {
 执行顺序已经在 Step 4 最终计划中收敛，不再按单个 property 零散提交：
 
 1. Step 4.0 已完成：解除普通 enhanced/IDMA 与 XIP 的错误耦合，并增加 `0xeb` 四阶段回归；
-2. Step 4.1 一次建立第一批 property 契约、校验、动态 FIFO、兼容默认值和最小迁移 equality，内部 capability 位图固定为 0；
-3. Step 4.2 应用 K230 三实例 profile，先证明同一通用类型可表达 QSPI 与 FMC 差异；
-4. Step 4.3 锁定 enhanced、IDMA、XIP 三项内部 capability 位为 0 时的关闭语义；
-5. Step 4.4 执行完整构建、qtest、公共头文件、依赖残留和 patch 归属检查。
+2. Step 4.1 建立最小配置、Standard PIO/FIFO、四种 TMOD、基础 VMState 和通用 qtest；
+3. Step 4.2 增加七路基础 IRQ 和通用 IRQ qtest；
+4. Step 4.3 应用 K230 三实例最小 profile、region 0 和七路 PLIC 路由，并删除 XIP 接口；
+5. Step 4.4 挂接 Standard 1-1-1 Flash，执行完整构建、qtest、公共头文件、依赖残留和 patch 归属检查。
 
-XIP property、GPIO 和第二个 sysbus region 必须留到后续 XIP series；Step 4.1 至 Step 4.3 直接删除当前固定 XIP 资源，不提前预埋公共接口。
+enhanced、DMA/IDMA、XIP property、IRQ、GPIO 和额外 MMIO 资源必须留到对应后续 series；Step 4.1 至 Step 4.3 删除当前中间态的未来接口，不提前预埋内部位图或 helper。
 
 ### 3.5 分支命名
 
@@ -174,8 +168,8 @@ XIP property、GPIO 和第二个 sysbus region 必须留到后续 XIP series；S
 | 第一步 | `ninja` 成功；qtest 全过；`git diff --check` 无报错；记录 commit hash 和测试输出 |
 | 第二步 | `ninja` 成功；qtest 结果与基线一致；`grep -r k230_dw_ssi hw/ssi/ include/hw/ssi/` 无残留（测试文件名除外）；`grep -r K230DwSsiState` 无残留 |
 | 第三步 | `ninja` 成功；qtest 结果与基线一致；`grep 'k230_hi_sys.h' hw/ssi/` 无结果；`grep 'K230HiSysState' include/hw/ssi/` 无结果；XIP 相关 qtest 场景仍通过 |
-| 第四步 | 先完成 Step 4.0 数据路径纠错，再完成 Step 4.1 配置骨架、Step 4.2 三实例 profile，最后按 enhanced SPI → IDMA → XIP 逐项门控；每个小目标均有定向 qtest 和完整回归；三实例 properties 值与 TRM/SDK/当前代码核对一致 |
-| 第五步 | 每个 patch 单独 checkout 后 `ninja` 成功；`git diff --check` 和 `checkpatch` 无报错；qtest 全过；cover letter 更新 |
+| 第四步 | Step 4.0 纠错已完成；Step 4.1 Standard PIO/FIFO；Step 4.2 七路 IRQ；Step 4.3 K230 三实例/PLIC；Step 4.4 Standard Flash 与收敛；每步有定向 qtest |
+| 第五步 | 第一批 5 个 patch 各自 checkout 后 `ninja` 成功；`git diff --check` 和 `checkpatch` 无报错；qtest 全过；cover letter 更新 |
 
 ## 6. 验证命令合集
 
@@ -274,8 +268,12 @@ ninja -C build tests/qtest/dw-ssi-test
 QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/k230-dw-ssi-test -v
 
 # 确认第一批属性在 machine 中正确设置
-rg -n 'fifo-depth|num-cs|max-lines|component-id|version-id|imr-reset' hw/riscv/k230.c
-rg -n 'axiawlen-reset|axiarlen-reset|spi-ctrlr0-reset' hw/riscv/k230.c
+rg -n 'fifo-depth|num-cs|imr-reset' hw/riscv/k230.c
+
+# 确认未来接口未进入第一批
+rg -n 'max-lines|dma-register-layout|has-enhanced-spi|has-idma|has-xip|xip-window-size' \
+  hw/ssi/dw_ssi.c include/hw/ssi/dw_ssi.h hw/riscv/k230.c
+# 预期：无第一批接口或状态命中
 ```
 
 ### 6.8 单 commit 验证（第五步重组时）

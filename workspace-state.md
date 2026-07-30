@@ -13,14 +13,14 @@
 | V1 基线 | V1 基线分支为 `k230-spiv3.4`；该分支和 `upstream-review/current/` 的 v3.4 材料均属于 V1。 |
 | V2 源码检查点 | 分支 `k230-V2-patch-spi`，HEAD `c689ac865f`；Step 4.0 已删除普通 enhanced mode phase 和 IDMA 1-4-4 XIP 特判。 |
 | 架构决策 | [K230 SPI/QSPI 上游 Review 与 V2 重构决策](./k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md)；这是 V2 唯一决策入口。 |
-| 当前计划 | [Step 4 Plan Final V1.2：实例配置与第一批 capability 边界](./k230/upstream-review/k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md)。 |
-| 当前源码 | [通用 DW SSI 模型](../qemu-camp-2026-k230/hw/ssi/dw_ssi.c)、[K230 machine](../qemu-camp-2026-k230/hw/riscv/k230.c)。 |
-| 当前验证 | [K230 SSI qtest](../qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)。 |
+| 当前计划 | [Step 4 Plan Final V1.3：Standard PIO 第一批范围](./k230/upstream-review/k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md)。 |
+| 当前源码 | [通用 DW SSI 模型](../my-qemu-camp-2026-k230/hw/ssi/dw_ssi.c)、[K230 machine](../my-qemu-camp-2026-k230/hw/riscv/k230.c)。 |
+| 当前验证 | [K230 SSI qtest](../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)。 |
 | 关键证据 | [寄存器审计](./k230/spi/k230-spi-qspi-register-audit.md)、[V1 Flash Window study](./k230/spi/k230-spi-qspi-flash-window-study-plan.md)、K230 TRM 与 SDK 驱动（由决策记录按需链接）。 |
 
 ### 下一步
 
-下一步从 Step 4.1 开始：建立 `DwSsiConfig` 的完整内部骨架、第一批 properties、配置校验、动态 FIFO、通用测试机和最小迁移 equality；内部 capability 位图固定为 0，public capability property 随 enhanced SPI → IDMA → XIP 对应功能 series 引入。上游第一批 series 只覆盖通用 DW SSI Standard SPI PIO、基础 IRQ、DMA 配置寄存器兼容性、K230 三实例与 PLIC 集成，以及独立的 Standard 1-1-1 SPI NOR 挂接；扩展寄存器在对应功能 series 前统一 RAZ/WI。commit 按单一职责逐步完成，发送前再重组；未经用户明确要求，不创建分支、不提交、不推送。
+下一步从 Step 4.1 开始：建立只含 `num_cs/fifo_depth/imr_reset` 的最小 `DwSsiConfig`、Standard PIO/FIFO、四种 TMOD、通用测试机和 `fifo-depth` 迁移 equality；Step 4.2 增加七路基础 IRQ；Step 4.3 完成 K230 三实例、region 0 和七路 PLIC 路由；Step 4.4 挂接 Standard 1-1-1 SPI NOR 并收敛验证。第一批不保留 enhanced、DMA/IDMA、DONE/AXIE、XIP 的内部位、property、IRQ、GPIO 或额外 MMIO 资源；未实现 offset 统一 RAZ/WI。最终重组为 5 个 patch；未经用户明确要求，不创建分支、不提交、不推送。
 
 ### 证据与范围闸门
 

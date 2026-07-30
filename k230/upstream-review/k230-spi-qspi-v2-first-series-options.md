@@ -1,5 +1,7 @@
 # K230 V2 第一阶段上游 Series 最终方案
 
+> **历史决策记录：禁止作为当前实施依据。** 上游 review 范围复核后，本文的“全部 A”方案已由 [Step 4 Plan Final V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md) 取代。V1.3 进一步删除 DMA layout、future capability 和恒低扩展 IRQ，只保留当前消费者需要的 Standard PIO 基线。
+
 首次记录：2026-07-30
 
 最近更新：2026-07-30

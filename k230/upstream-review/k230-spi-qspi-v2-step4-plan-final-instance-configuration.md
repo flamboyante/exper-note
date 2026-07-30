@@ -1,6 +1,6 @@
 # K230 V2 第四步 Plan Final：实例配置与 capability 门控
 
-> **历史方案：禁止作为实施依据。** 本文已由 [Step 4 Plan Final V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 取代。第一批不再暴露只能为 `false` 的 capability property；请按 V1.2 的内部全零位图、关闭语义和 property 后置边界实施。
+> **历史方案：禁止作为实施依据。** 本文已由 [Step 4 Plan Final V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md) 取代。第一批只提交有当前消费者的 Standard PIO/FIFO、七路基础 IRQ、K230 三实例/PLIC 和 Standard 1-1-1 Flash；不预留 future capability、DMA layout、DONE/AXIE 或 XIP 接口。
 
 首次记录：2026-07-29
 
