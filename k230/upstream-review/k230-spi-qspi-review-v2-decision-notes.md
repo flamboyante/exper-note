@@ -2,7 +2,7 @@
 
 首次记录：2026-07-27
 
-合并更新：2026-07-28
+合并更新：2026-07-30
 
 适用分支：`qemu-camp-2026-k230/k230-spiv3.4`
 问题来源：Bin Meng 对第 1 个 SSI patch 的 review
@@ -48,16 +48,16 @@ K230 machine
 
 ### 1.1 Step 4 Plan Final 裁决
 
-Step 4 的唯一执行入口是 [实例配置与 capability 门控 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md)。Plan A、Plan B、Plan C 及其 planning handoff 只保留为历史推演材料。
+Step 4 的唯一执行入口是 [实例配置与第一批 capability 边界 Plan Final V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md)。Plan A、Plan B、Plan C、原 Plan Final 及其 planning handoff 只保留为历史推演材料。
 
 TRM 与 SDK 复核后，最终边界如下：
 
 - QSPI 12.3 寄存器表从 `0x0f8 DDR_DRIVE_EDGE` 直接跳到 `0x118 SPI_CTRLR1`，不包含 `XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST`；三者只在 FMC 5.3 XIP 寄存器表中定义；
 - RT-Smart 公共寄存器结构体包含三个成员，只能证明最大布局和偏移占位；RT-Smart、U-Boot、Linux 的普通 enhanced/IDMA 路径均没有写 `XIP_MODE_BITS`；
 - 当前 `dw_ssi_decode_enhanced_command()`、普通 enhanced mode phase，以及 IDMA 1-4-4 特判错误地消费 XIP fields。Step 4.0 必须先把普通事务恢复为 instruction → address → dummy → data；真正 XIP transaction 才允许插入 mode；
-- K230 profile 保持 QSPI0/QSPI1 `has-xip=false`、SPI-OPI/FMC `has-xip=true`。无 XIP capability 时三个 XIP 寄存器及扩展 XIP 寄存器均 RAZ/WI，不创建第二个 MMIO region；
-- TXU 是 TX FIFO underflow，不属于 IDMA capability。`has-idma=false` 只使 DONE、AXIE 无效，TXU 仍属于基础 IRQ；
-- 迁移只对 `fifo-depth` 和内部 capability profile 做 equality。post-load 对与 capability 冲突的动态状态返回错误，不用 sanitize 静默掩盖不一致。
+- 硬件证据保持 QSPI0/QSPI1 无 XIP、SPI-OPI/FMC 具备 XIP；第一批内部 capability 位图统一为 0，不暴露 `has-xip`/`xip-window-size` property。XIP-only 寄存器 RAZ/WI，不创建第二个 MMIO region；后续 XIP series 才为 FMC 引入 property 正路径；
+- TXU 是 TX FIFO underflow，不属于 IDMA capability。第一批 IDMA 位为 0，DONE、AXIE 无效且输出恒低，TXU 仍属于基础 IRQ；
+- 第一批迁移只对 `fifo-depth` 和 DMA register layout 做 equality。capability property 与正路径随对应后续 series 引入后，再增加必要的迁移一致性检查。
 
 ## 2. Review 要求与重构目标
 

@@ -14,9 +14,9 @@
 | 当前 HEAD | `c689ac865f` |
 | Step 1 / Step 2 | 已完成并通过编译与 K230 SSI qtest |
 | Step 3 | 已完成 HI_SYS 反向依赖解耦；通用 SSI 使用 `xip-enable` GPIO input |
-| Step 4 Plan Final | [实例配置与 capability 最终实施计划](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 已完成；Step 4.0 已实施并通过 12 项 K230 SSI qtest |
+| Step 4 Plan Final | [实例配置与第一批 capability 边界 V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 已完成；Step 4.0 已实施并通过 12 项 K230 SSI qtest |
 
-完整 Step 4 本地终态和第一批上游投稿范围分开管理：本地继续完成 Step 4.1 至 Step 4.4；第一批上游 series 只重组通用 DW SSI Standard SPI PIO、基础 IRQ、K230 三实例与 PLIC 集成，扩展能力后续分批发送。
+Step 4.1 至 Step 4.4 直接形成第一批上游投稿终态：内部 capability 骨架保留但固定为 0，public capability property 随对应功能后送。第一批重组通用 DW SSI Standard SPI PIO、基础 IRQ、DMA 配置寄存器兼容性、K230 三实例与 PLIC 集成，以及独立的 Standard 1-1-1 SPI NOR 挂接。
 
 下文第一步至第三步保留最初路线和历史检查点；执行 Step 4 时以专门计划中的配置矩阵、TDD 顺序和命令为准。
 
@@ -82,15 +82,15 @@
 
 ### 第四步：再引入实例配置
 
-行为边界稳定后，按 [Step 4 Plan Final](k230-spi-qspi-v2-step4-plan-final-instance-configuration.md) 分五个小目标实施：
+行为边界稳定后，按 [Step 4 Plan Final V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 分五个小目标实施：
 
 1. Step 4.0 已完成：修正 ordinary enhanced/IDMA 对 XIP mode fields 的错误消费，普通事务固定为 instruction → address → dummy → data；
-2. 建立集中 `DwSsiConfig`、完整 properties、配置校验、动态 FIFO、通用测试机，以及 `fifo-depth`/capability profile 两项迁移 equality；
+2. 建立集中 `DwSsiConfig`、第一批 properties、配置校验、动态 FIFO、通用测试机，以及 `fifo-depth`/DMA layout 两项迁移 equality；
 3. 在 K230 machine 中应用 QSPI0、QSPI1、SPI-OPI/FMC 三实例完整 profile；
-4. 按 enhanced SPI → IDMA → XIP 的顺序逐项接入 capability 关闭语义；
+4. 锁定 enhanced SPI、IDMA、XIP 内部 capability 位为 0 时的关闭语义；public property 随对应后续功能 series 引入；
 5. 完成构建、通用/K230 qtest、公共头文件、迁移边界和未来 patch 归属检查。
 
-最终 property 集合为：
+第一批 property 集合为：
 
 - `fifo-depth`
 - `num-cs`
@@ -101,12 +101,8 @@
 - `axiawlen-reset`
 - `axiarlen-reset`
 - `spi-ctrlr0-reset`
-- `has-enhanced-spi`
-- `has-idma`
-- `has-xip`
-- `xip-window-size`
 
-三项 capability 全部纳入 Step 4，但每项形成独立、可验证的小改动。`has-xip=false` 最终不创建第二个 sysbus MMIO region；K230 仅为 FMC profile 映射 128 MiB XIP window。
+`DwSsiConfig` 同时保留内部全零 capability 位图。`has-enhanced-spi`、`has-idma`、`has-xip` 和 `xip-window-size` public property 分别随 enhanced、IDMA、XIP 后续 series 引入；第一批不创建第二个 sysbus MMIO region。
 
 XIP 寄存器边界按 TRM 最终裁决：`XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 均为 FMC XIP 专用寄存器，QSPI profile 下 RAZ/WI。TXU 属于基础 TX FIFO underflow IRQ，不随 `has-idma` 关闭；IDMA capability 只控制 DONE、AXIE。
 
@@ -160,12 +156,12 @@ if (logical_index == 0) {
 执行顺序已经在 Step 4 最终计划中收敛，不再按单个 property 零散提交：
 
 1. Step 4.0 已完成：解除普通 enhanced/IDMA 与 XIP 的错误耦合，并增加 `0xeb` 四阶段回归；
-2. Step 4.1 一次建立完整 property 契约、校验、动态 FIFO、兼容默认值和最小迁移 equality，但 capability 暂不改变寄存器可见性；
+2. Step 4.1 一次建立第一批 property 契约、校验、动态 FIFO、兼容默认值和最小迁移 equality，内部 capability 位图固定为 0；
 3. Step 4.2 应用 K230 三实例 profile，先证明同一通用类型可表达 QSPI 与 FMC 差异；
-4. Step 4.3 依次门控 `has-enhanced-spi`、`has-idma`、`has-xip`，每项都有独立负路径和 K230 正路径回归；
+4. Step 4.3 锁定 enhanced、IDMA、XIP 三项内部 capability 位为 0 时的关闭语义；
 5. Step 4.4 执行完整构建、qtest、公共头文件、依赖残留和 patch 归属检查。
 
-XIP 资源条件创建必须留到 `has-xip` 小目标；Step 4.1/4.2 不提前改变第二个 sysbus region 的创建时机。
+XIP property、GPIO 和第二个 sysbus region 必须留到后续 XIP series；Step 4.1 至 Step 4.3 直接删除当前固定 XIP 资源，不提前预埋公共接口。
 
 ### 3.5 分支命名
 
@@ -277,10 +273,9 @@ ninja -C build qemu-system-riscv64
 ninja -C build tests/qtest/dw-ssi-test
 QTEST_QEMU_BINARY=build/qemu-system-riscv64 build/tests/qtest/k230-dw-ssi-test -v
 
-# 确认属性在 machine 中正确设置
+# 确认第一批属性在 machine 中正确设置
 rg -n 'fifo-depth|num-cs|max-lines|component-id|version-id|imr-reset' hw/riscv/k230.c
 rg -n 'axiawlen-reset|axiarlen-reset|spi-ctrlr0-reset' hw/riscv/k230.c
-rg -n 'has-enhanced-spi|has-idma|has-xip|xip-window-size' hw/riscv/k230.c
 ```
 
 ### 6.8 单 commit 验证（第五步重组时）

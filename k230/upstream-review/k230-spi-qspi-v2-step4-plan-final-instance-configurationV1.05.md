@@ -1,16 +1,16 @@
 # K230 V2 第四步 Plan Final：实例配置与 capability 门控
 
-> **历史方案：禁止作为实施依据。** 本文已由 [Step 4 Plan Final V1.2](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.2.md) 取代。第一批不再暴露只能为 `false` 的 capability property；请按 V1.2 的内部全零位图、关闭语义和 property 后置边界实施。
-
 首次记录：2026-07-29
 
-最终修订：2026-07-29（复核 XIP 寄存器边界、普通 enhanced/IDMA 数据路径、TXU 归属和迁移一致性）
+最终修订：2026-07-30（记录 Step 4.0 完成状态，并明确第一批上游 series 只覆盖 Standard SPI PIO、基础 IRQ 和 K230 集成）
 
-适用代码检查点：`qemu-camp-2026-k230/` 分支 `k230-V2-patch-spi`，commit `189638cdf4`
+适用代码检查点：`qemu-camp-2026-k230/` 分支 `k230-V2-patch-spi`，commit `c689ac865f`
 
-文档状态：最终实施计划；本轮只完成计划，不代表 Step 4 已经修改源码
+文档状态：Step 4.0 已完成源码实施和 12 项 K230 SSI qtest；Step 4.1 至 Step 4.4 仍是待实施计划
 
 本文是 [V2 实施路线](k230-spi-qspi-v2-implementation-plan.md) 第四步“引入实例配置”的唯一执行计划。Plan A、Plan B、Plan C 及其 planning handoff 只保留为历史推演材料，不再作为实施入口。架构边界以 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 为准：保留单一通用 `TYPE_DW_SSI` / `DwSsiState`，K230 machine 通过 properties 配置三个实例，不增加 `TYPE_K230_DW_SSI` wrapper。
+
+> **上游投稿边界说明（2026-07-30）**：本文描述的是完整 Step 4 的本地实施终态，不等于第一批上游 patch series 必须携带全部 capability。第一批 series 计划只提交通用 DW SSI 的 Standard SPI PIO、基础 IRQ，以及 K230 三实例和 PLIC 集成；enhanced SPI、SPI NOR、IDMA、HI_SYS 和 XIP 分批后送。详细边界见第 15 节。
 
 ---
 
@@ -47,7 +47,7 @@ CodeGraph 首先定位了 `k230_soc_realize()` 的实例配置、realize、IRQ �
 | reset | `IMR`、AXI burst、IDR、VERSION、`SPI_CTRLR0` 仍由通用模型硬编码 |
 | capability | enhanced SPI、IDMA、XIP 均无存在性开关 |
 | VMState | 保存完整寄存器数组、FIFO、enhanced、IDMA、XIP enable 等运行时状态 |
-| qtest | `k230-dw-ssi-test` 共 10 项，已有正路径但缺 capability `false` 组合 |
+| qtest | `k230-dw-ssi-test` 共 12 项；Step 4.0 新增 enhanced/XIP 隔离和 IDMA 1-4-4 回归，仍缺 capability `false` 组合 |
 
 ### 1.2 当前硬编码点清单
 
@@ -59,7 +59,7 @@ CodeGraph 首先定位了 `k230_soc_realize()` 的实例配置、realize、IRQ �
 | H4 | `hw/ssi/dw_ssi.c:31-37` | `IMR`、IDR、VERSION、AXI burst 固定 | reset 从实例配置读取 |
 | H5 | `hw/ssi/dw_ssi.c:33-34` | 仅按 SPI/FMC 固定两个 `SPI_CTRLR0` reset | 改为 `spi-ctrlr0-reset` |
 | H6 | `hw/ssi/dw_ssi.c:425-430` | `SR.TFNF/RFF` 与 256 比较 | 改为 `cfg.fifo_depth` |
-| H7 | `hw/ssi/dw_ssi.c:537-584`、`949-955`、`1021-1043` | 普通 enhanced/IDMA 错误读取 `XIP_MODE_BITS`，PIO 还包含 XIP mode phase | Step 4.0 先解除耦合，普通事务只保留 instruction/address/dummy/data |
+| H7 | 原 `hw/ssi/dw_ssi.c:537-584`、`949-955`、`1021-1043` | 普通 enhanced/IDMA 曾错误读取 `XIP_MODE_BITS`，PIO 曾包含 XIP mode phase | Step 4.0 已完成：普通事务只保留 instruction/address/dummy/data |
 | H8 | `hw/ssi/dw_ssi.c:813-984` | IDMA 寄存器和入口始终存在 | `has-idma` 关闭时 RAZ/WI、无搬运，仅 DONE/AXIE 无效；TXU 保持基础 FIFO IRQ |
 | H9 | `hw/ssi/dw_ssi.c:1201-1535` | read/write switch 无 capability 分组 | 增加统一寄存器存在性辅助函数 |
 | H10 | `hw/ssi/dw_ssi.c:1578-1585` | reset 使用 K230 值，并用 `max_lines == 8` 推断 FMC | 全部从 `cfg` 读取，删除推断 |
@@ -167,7 +167,7 @@ Step 4 后应改为：固定接口在 `instance_init` 注册，依赖 property �
 | XIP 归属 | 通用模型实现 XIP transaction 和可选 region；K230 只决定 profile、地址映射与 Flash 连接 |
 | IRQ / VMState | IRQ 输出数量和 VMState schema 固定；TXU 属于基础 FIFO IRQ，IDMA 只增加 DONE/AXIE；迁移仅对 FIFO 深度和 capability profile 做 equality |
 | Octal 边界 | `max-lines=8` 只表达 FMC 线宽上限，本步不实现 Octal/DDR/RXDS 数据路径 |
-| 代码检查点 | 行号、QOM child 名称和现有默认行为基于 `k230-V2-patch-spi` 的 `189638cdf4`；实施前若 HEAD 变化，先重新定位，不直接套用旧行号 |
+| 代码检查点 | Step 4.0 完成状态基于 `k230-V2-patch-spi` 的 `c689ac865f`；后续行号、QOM child 名称和默认行为若随 HEAD 变化，先重新定位，不直接套用旧行号 |
 
 除上述检查点时效性外，本文没有依赖未确认 Databook 内容的阻塞假设。若新证据改变 K230 profile，先更新决策记录和配置矩阵，再实施代码。
 
@@ -901,6 +901,8 @@ static const DwSsiTestProperty full_xip[] = {
 
 ## 7. Step 4.0：解除普通 enhanced/IDMA 与 XIP 的错误耦合
 
+**实施状态：已完成。** 对应代码检查点为 `c689ac865f`。新增 `/k230-dw-ssi/enhanced-xip-isolation` 和 `/k230-dw-ssi/idma-quad-io`，完整 K230 SSI qtest 12/12 PASS。
+
 ### 目标
 
 先修正当前源码中的既有行为错误，再开始实例配置重构。普通 enhanced PIO 和 IDMA 都只执行：
@@ -938,7 +940,7 @@ instruction → address → optional mode → dummy → data
 
 ### 目标
 
-先引入配置表达、校验、动态 FIFO 和通用测试载体，但默认值保持当前 behavior。此阶段不让 capability 改变寄存器可见性；现有 K230 machine 即使尚未设置新 property，10 项 qtest 也必须保持通过。
+先引入配置表达、校验、动态 FIFO 和通用测试载体，但默认值保持当前 behavior。此阶段不让 capability 改变寄存器可见性；现有 K230 machine 即使尚未设置新 property，12 项 qtest 也必须保持通过。
 
 ### TDD 顺序
 
@@ -948,7 +950,7 @@ instruction → address → optional mode → dummy → data
 4. 增加 `dw_ssi_validate_config()`；
 5. 把 FIFO 创建移到 realize，并替换所有固定容量判断；
 6. reset 改从 `cfg` 读取，但默认值与当前常量一致；
-7. 运行通用定向 qtest 和现有 K230 10 项回归。
+7. 运行通用定向 qtest 和现有 K230 12 项回归。
 
 ### 失败断言
 
@@ -990,7 +992,7 @@ build/tests/qtest/dw-ssi-test -p /dw-ssi/config -v
 
 - `DwSsiConfig` 与完整 property 集合存在；
 - `fifo-depth=8` 的通用测试通过；
-- 默认启动 K230 的 10 项 qtest 全部通过；
+- 默认启动 K230 的 12 项 qtest 全部通过；
 - capability 仍未改变寄存器可见性，避免在同一小目标混入门控行为。
 
 ---
@@ -1063,7 +1065,7 @@ build/tests/qtest/k230-dw-ssi-test \
 - QSPI0/QSPI1/FMC 的 reset profile 与配置矩阵一致；
 - 5/5/1 个 CS 和 256 深度 FIFO 有行为断言；
 - K230 只映射 FMC 的 XIP region；QSPI 的 `has-xip=false` 已写入 profile，但“不创建 region 1”的资源门控留到 Step 4.3.3；
-- 现有 10 项测试仍全过。
+- 现有 12 项测试仍全过。
 
 ---
 
@@ -1309,7 +1311,7 @@ QTEST_QEMU_BINARY=$PWD/build/qemu-system-riscv64 \
 build/tests/qtest/k230-wdt-test -v
 ```
 
-成功标准：通用测试全部 PASS；K230 原 10 项加新增 profile/FIFO 测试全部 PASS；WDT qtest PASS；无 FAIL/ERROR/SKIP。
+成功标准：通用测试全部 PASS；K230 当前 12 项加新增 profile/FIFO 测试全部 PASS；WDT qtest PASS；无 FAIL/ERROR/SKIP。
 
 ### 13.3 公共头文件独立包含
 
@@ -1347,10 +1349,10 @@ scripts/checkpatch.pl -f tests/qtest/k230-dw-ssi-test.c
 
 ### Step 4.0：纠正现有数据路径
 
-- [ ] 普通 enhanced/IDMA 解码不读取 `XIP_MD_BIT_EN`、`XIP_MBL`、`XIP_MODE_BITS`
-- [ ] 删除普通 enhanced mode phase 和 IDMA 1-4-4 特判
-- [ ] 普通 enhanced/IDMA 四阶段回归通过
-- [ ] FMC XIP mode bits 正路径保持通过
+- [x] 普通 enhanced/IDMA 解码不读取 `XIP_MD_BIT_EN`、`XIP_MBL`、`XIP_MODE_BITS`
+- [x] 删除普通 enhanced mode phase 和 IDMA 1-4-4 特判
+- [x] 普通 enhanced/IDMA 四阶段回归通过
+- [x] FMC XIP mode bits 正路径保持通过
 
 ### Step 4.1：配置骨架
 
@@ -1365,7 +1367,7 @@ scripts/checkpatch.pl -f tests/qtest/k230-dw-ssi-test.c
 - [ ] reset 从 `cfg` 读取，默认行为不变
 - [ ] 增加 `fifo-depth` 和 `capabilities` 两项 VMState equality
 - [ ] 同 profile 迁移成功，FIFO/capability 不一致迁移失败
-- [ ] 通用 config qtest 与 K230 10 项回归通过
+- [ ] 通用 config qtest 与 K230 12 项回归通过
 
 ### Step 4.2：K230 profile
 
@@ -1397,7 +1399,104 @@ scripts/checkpatch.pl -f tests/qtest/k230-dw-ssi-test.c
 
 ---
 
-## 15. 与最终 V2 patch 系列的关系
+## 15. 第一批上游 Series 边界与渐进提交策略
+
+### 15.1 第一批 Series 的目标
+
+第一批上游 series 不追求一次完成 K230 SPI Flash 启动链，而是先提交一个边界清晰、可独立 review 的基础控制器：
+
+```text
+通用 DesignWare SSI
+  ├── Standard single-line SPI PIO
+  ├── TX/RX FIFO
+  ├── 基础中断控制器
+  └── 可配置实例参数
+            ↓
+K230 machine
+  ├── 创建三个 SSI 实例
+  ├── 显式设置基础 profile
+  ├── 映射控制器 MMIO
+  └── 把 IRQ 输出连接到 PLIC
+```
+
+这批 series 的核心 review 问题只有两个：
+
+1. `dw_ssi.c` 是否已经成为不依赖 K230 类型、地址和 HI_SYS 的通用设备模型；
+2. K230 是否只负责实例配置、地址映射和 PLIC 接线。
+
+第一批不以 SDK U-Boot 从 SPI NOR 启动作为合入条件，因为 SPI NOR、enhanced SPI 和 IDMA 不在本批范围。完成标准是通用寄存器/FIFO/PIO/IRQ qtest 与 K230 实例/PLIC 集成 qtest 全部通过。
+
+### 15.2 第一批包含和不包含的内容
+
+| 类别 | 第一批包含 | 第一批不包含 |
+|---|---|---|
+| 通用设备 | `TYPE_DW_SSI`、SSI bus、控制器 region 0、CS outputs、realize/finalize、reset、基础 VMState | K230 wrapper、HI_SYS 指针、K230 地址常量 |
+| 配置 | `num-cs`、`fifo-depth`、`component-id`、`version-id`、`imr-reset` 及必要校验 | `max-lines`、`spi-ctrlr0-reset`、AXI burst reset、enhanced/IDMA/XIP capability properties |
+| 数据路径 | Standard single-line SPI，四种 TMOD、frame width、loopback、FIFO level/status | Dual/Quad/Octal、enhanced command、SPI NOR、IDMA、XIP transaction |
+| IRQ | TXE、TXO、RXF、RXO、TXU、RXU、MST 的基础语义和 K230 PLIC 路由 | DONE/AXIE 的产生和清除逻辑 |
+| 资源 | 固定控制器 MMIO、SSI bus、CS 和 IRQ 接口 | XIP region、`xip-enable` GPIO、Flash attachment |
+| 测试 | 通用寄存器/PIO/IRQ 测试，K230 三实例 profile、MMIO 和 PLIC 隔离测试 | enhanced、Flash、IDMA、HI_SYS、XIP 正负路径 |
+
+`TXU` 属于基础 TX FIFO underflow，必须随第一批 IRQ 一起实现。DONE、AXIE 属于 IDMA；为保持 K230 物理接线和 QOM GPIO output 数量稳定，可以在第一批注册并路由完整 9 路输出，但 DONE/AXIE 必须恒低，其 IMR/ISR/RISR 位在 IDMA series 到来前不得表现为有效功能。
+
+### 15.3 “寄存器占位但不提供功能”的精确定义
+
+第一批可以保留完整控制器 MMIO aperture，但不能通过一组半实现的寄存器暗示 enhanced、IDMA 或 XIP 已受支持。占位采用以下规则：
+
+1. **地址空间占位**：region 0 大小保持稳定；未实现 offset 统一 RAZ/WI，不为每个未来寄存器增加空 case；
+2. **基础寄存器真实实现**：Standard PIO、FIFO、状态、基础 IRQ、IDR/VERSION 所依赖的寄存器必须具有明确 reset、write mask 和副作用；
+3. **扩展寄存器不伪装功能**：`SPI_CTRLR0` 扩展字段、internal DMA/AXI、XIP 专用寄存器在对应 series 前不进入有效数据路径；
+4. **有证据才暴露非零契约**：如果 firmware 枚举确实需要读取某个扩展寄存器 reset，可以单独实现只读/reset 语义并写测试，但 commit message 必须声明“寄存器可见不等于数据路径已实现”；
+5. **不提前增加未来 property**：property 随首次使用它的功能 patch 引入，避免 Patch 1 出现没有消费者的 capability scaffolding。
+
+因此，“先占位”推荐表达为：**MMIO aperture 已存在，未实现扩展 offset RAZ/WI**；不推荐提前复制完整寄存器表、写入全部 K230 reset 值，却让实际功能留到数个 series 之后。
+
+### 15.4 第一批仍需具备的通用基础
+
+除了 PIO 和 IRQ，第一批还需要以下基础，否则“通用 DW SSI”拆分仍不完整：
+
+- `DwSsiConfig` 的第一批最小子集和 realize 前配置校验；
+- FIFO、CS 动态资源的明确创建和销毁生命周期；
+- 基础 VMState：寄存器、FIFO、PIO phase、remaining frames、IRQ latch、active CS；
+- 固定且有文档说明的 SSI bus、CS output 和 IRQ output 接口；
+- 通用 qtest 载体，用于证明 PIO/IRQ 语义不依赖 K230 machine；
+- K230 集成 qtest 只验证三实例 profile、地址映射、PLIC source 和实例隔离，避免与通用测试重复；
+- 非法 `num-cs`、`fifo-depth` 等配置在 realize 阶段返回清晰错误。
+
+第一批不需要 trace events、SPI NOR 或启动镜像。trace 可以随对应功能加入，避免单独增加只为调试服务的 review 面积。
+
+### 15.5 第一批 Commit 顺序
+
+第一批建议保持五个可编译、可回归的提交，每个提交只增加一类职责：
+
+1. `hw/ssi: Add a Synopsys DesignWare SSI standard register model`
+   - 建立通用 QOM 类型、最小配置、基础寄存器、reset、VMState 和通用 register qtest；
+2. `hw/riscv/k230: Instantiate DesignWare SSI controllers`
+   - 创建三个实例，设置第一批所需 profile，映射 region 0；
+3. `hw/ssi: Implement DesignWare SSI FIFO and standard PIO transfers`
+   - 实现动态 FIFO、四种 TMOD、loopback 和 PIO qtest；
+4. `hw/ssi: Add DesignWare SSI standard interrupt support`
+   - 实现基础 raw/masked/clear 语义、threshold IRQ 和通用 IRQ qtest；
+5. `hw/riscv/k230: Route SSI interrupts to the PLIC`
+   - 完成三实例 PLIC 接线和路由隔离 qtest。
+
+测试应跟随首次实现该行为的 commit，不把所有测试集中到最后一个 patch。每个 commit 完成后至少执行增量构建、对应定向 qtest 和 `git diff --check`；完成整个 series 后再运行完整通用/K230 qtest。
+
+本地开发 commit 可以按 Step 4.0、4.1、4.2 等小目标逐步积累；发送上游前再重组到上述五个职责提交。Step 4.0 当前提交属于本地纠错历史：第一批 series 不包含 enhanced/IDMA，因此不需要单独携带这个修复 patch；后续 enhanced/IDMA series 应从首次出现开始就是正确实现，不能先引入错误 mode phase 再补修复。
+
+### 15.6 后续 Series
+
+第一批合入或架构 review 基本稳定后，再顺序发送：
+
+1. enhanced SPI + `max-lines` / `spi-ctrlr0-reset` + SPI NOR；
+2. optional internal DMA + AXI 配置 + DONE/AXIE；
+3. K230 HI_SYS + optional XIP region、GPIO 和 XIP transaction。
+
+后续 series 不应同时并发发送，否则 reviewer 同一时间仍需理解完整三千余行改动，失去分批投稿的意义。
+
+---
+
+## 16. 与最终 V2 patch 系列的关系
 
 Step 4 的实现内容在第五步重组时按职责回填，不形成一个覆盖所有功能的“大配置 patch”：
 
@@ -1415,7 +1514,7 @@ Step 4 的实现内容在第五步重组时按职责回填，不形成一个覆�
 
 ---
 
-## 16. 参考入口
+## 17. 参考入口
 
 - [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md)
 - [V2 实施路线](k230-spi-qspi-v2-implementation-plan.md)
@@ -1436,7 +1535,7 @@ Step 4 的实现内容在第五步重组时按职责回填，不形成一个覆�
 
 ---
 
-## 17. 与总决策文档的关系
+## 18. 与总决策文档的关系
 
 本文只细化 V2 第四步。通用层与 K230 层边界、XIP aperture 归属、默认不增加 wrapper、capability 证据标准仍以 [V2 决策记录](k230-spi-qspi-review-v2-decision-notes.md) 为准。
 
