@@ -20,7 +20,7 @@
 
 ### 下一步
 
-下一步从 Step 4.1 开始：建立只含 `num_cs/fifo_depth/imr_reset` 的最小 `DwSsiConfig`、Standard PIO/FIFO、四种 TMOD、通用测试机和 `fifo-depth` 迁移 equality；Step 4.2 增加七路基础 IRQ；Step 4.3 完成 K230 三实例、region 0 和七路 PLIC 路由；Step 4.4 挂接 Standard 1-1-1 SPI NOR 并收敛验证。第一批不保留 enhanced、DMA/IDMA、DONE/AXIE、XIP 的内部位、property、IRQ、GPIO 或额外 MMIO 资源；未实现 offset 统一 RAZ/WI。最终重组为 5 个 patch；未经用户明确要求，不创建分支、不提交、不推送。
+下一步从 Step 4.1 开始：建立只含 `num_cs/fifo_depth/imr_reset` 的最小 `DwSsiConfig`、Standard PIO/FIFO、四种 TMOD、通用测试机和三项配置 migration equality；Step 4.2 增加七路基础 IRQ；Step 4.3 完成 K230 三实例、region 0 和七路 PLIC 路由；Step 4.4 把 Standard 1-1-1 SPI NOR 挂到 SPI-OPI/FMC CS0 并收敛验证。第一批不保留 enhanced、IDMA、DONE/AXIE、XIP 的内部位、property、IRQ、GPIO 或额外 MMIO 资源；K230 internal-AXI DMA offset 统一 RAZ/WI，external DMA 不进入当前 V2 路线。最终重组为 5 个 patch；未经用户明确要求，不创建分支、不提交、不推送。
 
 ### 证据与范围闸门
 

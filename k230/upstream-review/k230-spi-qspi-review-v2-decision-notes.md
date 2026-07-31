@@ -57,8 +57,8 @@ TRM 与 SDK 复核后，最终边界如下：
 - 当前 `dw_ssi_decode_enhanced_command()`、普通 enhanced mode phase，以及 IDMA 1-4-4 特判错误地消费 XIP fields。Step 4.0 必须先把普通事务恢复为 instruction → address → dummy → data；真正 XIP transaction 才允许插入 mode；
 - 硬件证据保持 QSPI0/QSPI1 无 XIP、SPI-OPI/FMC 具备 XIP，但第一批不提交任何 XIP property、内部位、GPIO、第二个 MMIO region 或 K230 aperture 映射；XIP-only 寄存器统一 RAZ/WI；
 - TXU 是 TX FIFO underflow，属于第一批七路基础 IRQ。DONE、AXIE output、状态和 PLIC 路由全部随 IDMA series 引入，不在第一批注册后恒低；
-- 第一批不提交 DMA register layout 或 DMA 寄存器存储语义。SDK Standard PIO 在 DMA offset RAZ/WI 返回 0 时可以正常工作；实际非零写入属于 DMA/IDMA 路径；
-- 第一批 `DwSsiConfig` 只保留 `num_cs`、`fifo_depth`、`imr_reset`，迁移只对 `fifo-depth` 做 equality；future property、状态和迁移约束随各自首个真实消费者引入。
+- 第一批不提交 DMA engine 或 DMA 寄存器存储语义。`0x04c/0x050/0x054` 只按 K230 internal-AXI `DMACR/AXIAWLEN/AXIARLEN` 版图识别并固定 RAZ/WI；不定义 external `DMATDLR/DMARDLR` 语义。external DMA 不进入当前 V2 路线，未来出现真实消费者后再单独评估；
+- 第一批 `DwSsiConfig` 只保留 `num_cs`、`fifo_depth`、`imr_reset`，迁移对三项不可变配置全部做 equality；future property、状态和迁移约束随各自首个真实消费者引入。
 
 ## 2. Review 要求与重构目标
 
@@ -113,6 +113,8 @@ K230 SDK 的 `drivers/spi/designware_spi.c` 来源于 U-Boot 通用 DesignWare S
 - `SSIC_HAS_DMA == 2`：内部 AXI DMA 寄存器。
 
 因此 IDMA 是 DWC SSI 的可选综合能力，不是 K230 外挂的 SoC DMA 模块。
+
+当前 V2 只建模 K230 的 `SSIC_HAS_DMA == 2` internal-AXI 版图。`SSIC_HAS_DMA == 1` 仅作为驱动家族证据保留，不进入当前寄存器目录、配置或后续 series 承诺；出现新的 external DMA 消费者后重新评估。
 
 ### 3.3 QEMU 已有 DesignWare 通用模型的组织先例
 
@@ -180,7 +182,7 @@ DWC 资料将其描述为可选或由综合参数决定，而 K230 TRM/SDK 给�
 
 ## 5. 通用层与 K230 层的最终边界
 
-下表描述长期最终归属，不表示第一批一次提交全部功能。第一批只实现 Standard PIO/FIFO、七路基础 IRQ、K230 三实例/PLIC 和 Standard 1-1-1 NOR；可选 enhanced、DMA/IDMA、XIP 接口随各自后续 series 引入。
+下表描述长期最终归属，不表示第一批一次提交全部功能。第一批只实现 Standard PIO/FIFO、七路基础 IRQ、K230 三实例/PLIC 和 Standard 1-1-1 NOR；可选 enhanced、internal IDMA、XIP 接口随各自后续 series 引入。external DMA 不在当前 V2 路线。
 
 | 功能 | 最终归属 | v2 表达方式 |
 |---|---|---|
@@ -244,7 +246,7 @@ K230 machine 选择 `DW_SSI`，不再由 `CONFIG_K230_DW_SSI` 编译通用控制
 | `fifo-depth` | uint32 | TX/RX FIFO 深度 |
 | `imr-reset` | uint32 | 七路基础 IRQ 的实例 reset 差异 |
 
-第一批不增加 `max-lines`、enhanced/IDMA/XIP property、DMA layout、AXI reset 或 XIP window 配置，也不预留内部 future bit/helper。未实现 offset 使用 RAZ/WI 或明确 unsupported 语义。后续 property 必须与正路径和测试在同一 series 引入。
+第一批不增加 `max-lines`、enhanced/IDMA/XIP property、DMA layout、AXI reset 或 XIP window 配置，也不预留内部 future bit/helper。internal-AXI DMA 和其他未实现 offset 使用 RAZ/WI 或明确 unsupported 语义；external DMA layout 不进入当前路线。后续 property 必须与正路径和测试在同一 series 引入。
 
 ### 6.3 K230 已知实例配置
 
@@ -368,7 +370,7 @@ IDR/version 采用当前确认的通用常量。`max-lines`、SPI/FMC `SPI_CTRLR
 
 ### 9.3 可选寄存器门控
 
-第一批不建立 capability 门控框架。Standard PIO/IRQ 寄存器实现真实语义；enhanced、DMA/IDMA、XIP offset 统一 RAZ/WI 或走集中 unsupported helper。后续功能 series 引入真实正路径时，再同时引入对应配置和门控，不预留无消费者 helper。
+第一批不建立 capability 门控框架。Standard PIO/IRQ 寄存器实现真实语义；enhanced、internal DMA/IDMA、XIP offset 统一 RAZ/WI 或走集中 unsupported helper。后续功能 series 引入真实正路径时，再同时引入对应配置和门控，不预留无消费者 helper。external DMA 不属于当前 V2 路线。
 
 ### 9.4 IRQ 输出
 
@@ -386,7 +388,7 @@ IDR/version 采用当前确认的通用常量。`max-lines`、SPI/FMC `SPI_CTRLR
 
 Patch 1 必须已经包含 Standard 寄存器、FIFO、四种 TMOD、PIO、reset、基础 VMState 和通用 qtest，不能先实例化空壳再由后续 patch 补基本数据路径。Patch 2 只增加七路基础 IRQ。测试跟随首次引入相应行为的 patch。
 
-enhanced SPI、DMA/IDMA、HI_SYS/XIP 和 trace 按独立后续 series 发送，每批随首个真实消费者引入其 property、IRQ、GPIO、MMIO、状态和测试。
+enhanced SPI、internal IDMA、HI_SYS/XIP 和 trace 按独立后续 series 发送，每批随首个真实消费者引入其 property、IRQ、GPIO、MMIO、状态和测试。external DMA 不属于当前 V2 路线。
 - Patch 5/7/9 中允许出现 K230 地址、PLIC、HI_SYS 和设备接线；
 - Patch 10 同时完成通用 XIP region、GPIO enable 和 K230 地址映射；
 - Patch 11 的通用 trace 使用 `dw_ssi_*` 命名，K230-only trace 留在对应 K230 文件。
@@ -468,7 +470,7 @@ v2 cover letter 应直接说明：
 
 - 已按 review 将控制器重构为通用 `DW_SSI`；
 - K230 只负责配置和 SoC 集成；
-- 第一批只提交 Standard PIO 和七路基础 IRQ；enhanced SPI、DMA/IDMA 和 XIP 接口随独立 follow-up series 引入；
+- 第一批只提交 Standard PIO 和七路基础 IRQ；enhanced SPI、internal IDMA 和 XIP 接口随独立 follow-up series 引入；external DMA 不在当前 V2 路线；
 - 删除了通用模型对 K230 HI_SYS 的依赖；
 - XIP 地址由 K230 machine 映射，XIP 事务由通用模型实现；
 - 当前模型范围是 K230 所需且有证据支持的 DWC SSI 子集。
@@ -479,7 +481,7 @@ v2 cover letter 应直接说明：
 > device and K230 machine integration. K230-specific addresses, PLIC
 > routing, HI_SYS control and flash wiring remain in the K230 machine,
 > while the first series implements only the reusable Standard PIO and
-> interrupt baseline. Enhanced SPI, DMA/IDMA and XIP will follow with
+> interrupt baseline. Enhanced SPI, internal DMA and XIP will follow with
 > their first functional consumers.
 
 ## 15. 参考资料

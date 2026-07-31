@@ -85,7 +85,7 @@ Step 4.1 至 Step 4.4 直接形成第一批上游投稿终态：只保留有当�
 行为边界稳定后，按 [Step 4 Plan Final V1.3](k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md) 分五个小目标实施：
 
 1. Step 4.0 已完成：修正 ordinary enhanced/IDMA 对 XIP mode fields 的错误消费，普通事务固定为 instruction → address → dummy → data；
-2. 建立最小 `DwSsiConfig`、三项 properties、动态 FIFO/CS、通用测试机、Standard PIO 四种 TMOD 和 `fifo-depth` 迁移 equality；
+2. 建立最小 `DwSsiConfig`、三项 properties、动态 FIFO/CS、通用测试机、Standard PIO 四种 TMOD、写保护/状态契约和三项配置迁移 equality；
 3. 注册并实现 TXE/TXO/RXF/RXO/TXU/RXU/MST 七路基础 IRQ；
 4. 在 K230 machine 中应用三实例最小 profile、映射 region 0、连接七路 PLIC，并删除第一批 XIP 接口；
 5. 挂接 Standard 1-1-1 Flash，完成构建、通用/K230 qtest、公共头文件、迁移边界和 patch 归属检查。
@@ -96,13 +96,15 @@ Step 4.1 至 Step 4.4 直接形成第一批上游投稿终态：只保留有当�
 - `num-cs`
 - `imr-reset`
 
-`DwSsiConfig` 第一批只包含 `num_cs`、`fifo_depth`、`imr_reset`。`max-lines`、DMA/IDMA、enhanced、XIP properties 和内部状态分别随对应后续功能 series 引入；第一批不创建 XIP GPIO 或第二个 sysbus MMIO region。
+`DwSsiConfig` 第一批只包含 `num_cs`、`fifo_depth`、`imr_reset`。`max-lines`、internal IDMA、enhanced、XIP properties 和内部状态分别随对应后续功能 series 引入；第一批不创建 XIP GPIO 或第二个 sysbus MMIO region。
+
+K230 的 `0x04c/0x050/0x054` 第一批只按 internal-AXI `DMACR/AXIAWLEN/AXIARLEN` 版图识别并固定 RAZ/WI。external `DMATDLR/DMARDLR` 布局不进入当前 V2 路线，未来出现真实消费者后再单独评估。
 
 XIP 寄存器边界按 TRM 最终裁决：`XIP_MODE_BITS`、`XIP_INCR_INST`、`XIP_WRAP_INST` 均为 FMC XIP 专用寄存器，第一批统一 RAZ/WI。TXU 属于基础 TX FIFO underflow IRQ；DONE/AXIE output 和状态全部随 IDMA series 引入。
 
 ### 第五步：最后重组第一批 5 个提交
 
-最终不能只在 3.4 顶部追加一个“大重构 patch”。第一批按通用 Standard PIO、基础 IRQ、K230 实例、PLIC、Standard Flash 重组为 5 个提交；enhanced、DMA/IDMA、XIP 使用独立 follow-up series。
+最终不能只在 3.4 顶部追加一个“大重构 patch”。第一批按通用 Standard PIO、基础 IRQ、K230 实例、PLIC、Standard Flash 重组为 5 个提交；enhanced、internal IDMA、XIP 使用独立 follow-up series。external DMA 不在当前 V2 路线。
 
 ## 3. 执行注意点
 
@@ -155,7 +157,7 @@ if (logical_index == 0) {
 4. Step 4.3 应用 K230 三实例最小 profile、region 0 和七路 PLIC 路由，并删除 XIP 接口；
 5. Step 4.4 挂接 Standard 1-1-1 Flash，执行完整构建、qtest、公共头文件、依赖残留和 patch 归属检查。
 
-enhanced、DMA/IDMA、XIP property、IRQ、GPIO 和额外 MMIO 资源必须留到对应后续 series；Step 4.1 至 Step 4.3 删除当前中间态的未来接口，不提前预埋内部位图或 helper。
+enhanced、internal IDMA、XIP property、IRQ、GPIO 和额外 MMIO 资源必须留到对应后续 series；Step 4.1 至 Step 4.3 删除当前中间态的未来接口，不提前预埋内部位图或 helper。external DMA 不在当前 V2 路线。
 
 ### 3.5 分支命名
 
