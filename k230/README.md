@@ -26,6 +26,13 @@
 
 ## 总览与背景
 
+- [K230 SPI NOR 冷启动专题](./spi/coldboot/)
+  - [冷启动知识手册](./spi/coldboot/k230-cold-boot-handbook.md)
+  - [v4 JFFS2 复现与验收](./spi/coldboot/k230-coldboot-canmv-qemu-v4-reproduction.md)
+  - 稳定概念、启动层次、Guest 固件职责、镜像格式、模块边界和验证术语。
+- [K230 SPI NOR 冷启动 Gap 调查与实施计划](./spi/coldboot/k230-cold-boot-gap-investigation.md)
+  - 动态实验、当前阻塞、证据等级、路线选择和下一步实施计划。
+
 - [K230 QEMU 训练营交流笔记](./k230-qemu-camp-notes.md)
   - 记录 K230 当前 QEMU 支持程度、SDK/Linux/U-Boot 现实状态、启动介质、RAM 执行和 OpenSBI 位置。
   - 第一次了解 K230 训练营任务时优先读这一篇。
