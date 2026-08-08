@@ -513,6 +513,77 @@ v2 cover letter 应直接说明：
 - 增加当前代码重构点、patch 顺序、测试边界和 review 回复建议；
 - 将 Databook 定位为增强证据，而不是架构拆分的前置阻塞项。
 
+## 17. 第一批 Review 要求与语义修复（2026-08-02）
+
+本节集中记录外部 review 提出的架构/语义问题及修复，供后续 patch、回复和
+复盘使用。开发过程中发现并修掉的具体实现 bug 另见 §18。全部已合入 `T_v2-5patch` 分支
+并通过验证（qtest 14/14、checkpatch 0 error/0 warning、`git diff --check`
+干净、U-Boot/Linux 端到端 PASS）。
+
+### 外部 review 7 问
+
+| # | review 问题 | TRM/语义依据 | 修复 |
+|---|---|---|---|
+| 1 | TXFTHR 启动水位 | TX FIFO 占用**超过** TXFTHR 才启动串行传输（DMA 启动水位）；SDK Standard PIO 显式写 0 | `run_transfer` 加门槛：IDLE 且 `tx_used <= TXFTHR` 时 return；TR 分支维护 `DW_SSI_PHASE_STANDARD_TR`（否则恒 IDLE 永不传输）；TXFTLR 写后重新调用 `run_transfer`。qtest `txfthr-start-gate` |
+| 2 | BAUDR=0（SCKDV=0） | TRM：SCKDV=0 关闭 sclk_out，不传输 | `run_transfer` 开头 `SCKDV == 0` 直接 return。qtest `baudr-zero` |
+| 3 | SER=0 是否清 FIFO | 只有清 SSIENR 才 flush FIFO；SER 只选设备 | 写 SER 时若 `old_ser != new_ser && phase != IDLE` 终止待决事务（`phase=IDLE; remaining_frames=0`），FIFO 内容保留；非零→非零（如 BIT(0)→BIT(1)）同样终止。qtest `ser-terminates-ro` |
+| 4 | SSTE 可写无行为 | TRM 规定 SSTE 为 R/W，复位 1，控制连续帧间 CS 翻转 | 不能把"未实现行为伪装成硬件只读"：恢复 SSTE 到 `CTRLR0` writable mask，明确声明 frame-boundary toggle 未建模。qtest register-contract 断言 SSTE 写 0 后读回 0 |
+| 5 | imr-reset 矛盾 | imr-reset 属性含不支持位 | realize 校验 `imr_reset & ~DW_SSI_IMR_WRITABLE_MASK` 报错；复位值只写 writable 位 |
+| 6 | 硬编码 profile | CTRLR0/SR/IDR/VERSION reset 值硬编码 | 明确声明建模的是 DWC SSI 1.03 profile（注释，不出现 K230 字样）；出现真实差异再属性化 |
+| 7 | 0xc0000000 unimplemented region | — | `spi-flash-xip` unimplemented region 位置保持在 dw_ssi[2] 映射后、hi_sys 前（与 V1 主线一致） |
+
+### 架构与实现修正
+
+- **9 路 IRQ 保持**：TXE/TXO/RXF/RXO/TXU/RXU/MST/DONE/AXIE 全部暴露；TXU/DONE/AXIE
+  依赖未建模引擎保持常低；K230 PLIC 路由 SPI0→146 / SPI1→155 / SPI2→164。
+- **VMState 迁移兼容**：`DW_SSI_PHASE_STANDARD_TR` 追加到枚举末尾（不插入中间）；
+  `post_load` 校验 phase/remaining_frames/active_cs/irq_latched。
+- **通用层去 K230 依赖**：dw_ssi 无 K230 类型/地址/HI_SYS 引用；profile 注释去掉
+  "K230" 字样（review #6 要求声明 profile，但不引入 SoC 名）。
+- **qtest 收敛**：删 `ser-keeps-fifo`、`threshold-invalid`（与 ser-terminates-ro /
+  register-contract 重叠）；补 `flash-jedec-id`、`flash-fixed-read`；最终 14 个
+  测试（P3 11 → P4 12 → P5 14）。
+- **MAINTAINERS 不改**：新增文件暂不登记（按用户决定，避免未 review 前引入额外改动）。
+
+### 过程教训
+
+- 修复 review 问题时先读 TRM/语义依据，再动手；SSTE 曾一度被误改成只读，
+  被 reviewer 指出 TRM 规定 R/W 后恢复。
+- SER 切换的终止语义经历了三轮补全：先补 SER=0，再补 SER 写后 phase 残留，
+  最后补非零→非零切换。
+- 每轮行为改动后必须重验：qtest 14/14 + U-Boot sf + Linux MTD 端到端。
+
+## 18. 开发过程 Bug 修复记录（2026-08-02）
+
+本节记录 V2 第一批开发过程中实际发现并修掉的具体 bug（代码级/行为级），
+与 §17 的 review 要求区分：§17 是外部 review 提出的问题，本节是实现缺陷。
+
+分支轨迹：`k230-V2-patch-s1-spi`（Step 4.1~4.3 实现/重构）→
+`k230-spi-v2pacth-s1`（4 个占位 commit `tset/tst2/tstt/tttt` + 工作区未提交改动，
+review 7 问与本节的 bug 修复几乎都发生在此）→ `T_v2-5patch`（占位 commit
+重写为正式 5 patch，全部修复合入并验证）。
+
+### Bug 清单
+
+| # | Bug | 现象 | 根因 | 修复 |
+|---|---|---|---|---|
+| 1 | TXFTHR 门槛遗漏 A | 设 TXFTHR>0 后写帧不传输 | 只加了 `tx_used <= TXFTHR` 启动门槛，TR 分支没维护 phase，phase 恒为 IDLE 被门槛拦截 | TR 分支 IDLE→`STANDARD_TR`，FIFO 空→IDLE（qtest `txfthr-start-gate`） |
+| 2 | TXFTHR 门槛遗漏 B | 改 TXFTLR 后已排队帧不启动 | A_TXFTLR 写后没有重新调用 `run_transfer` | 写后追加 `dw_ssi_run_transfer` 重新评估 |
+| 3 | SSTE 误改只读 | SSTE 写不入，qtest 断言只读 | 把"未实现行为"实现成"硬件只读"，违反 TRM（SSTE 为 R/W） | 恢复 SSTE 到 `CTRLR0` writable mask；删只读断言，改"写 0 读回 0" |
+| 4 | SER=0 保留旧 phase | SER=0 后再选 CS，旧 RO 事务继续收 | 最初修复只清 FIFO 保护，没重置 phase/remaining_frames | `old_ser != new_ser && phase != IDLE` 时重置 phase/remaining_frames（qtest `ser-terminates-ro`） |
+| 5 | SER 非零→非零切换 | BIT(0)→BIT(1) 旧事务在新 CS 上续跑 | 终止条件只覆盖 SER 清 0 | 用通用 `old_ser != new_ser` 条件覆盖（同 qtest） |
+| 6 | case 花括号误删 | 编译错 "case label not within a switch" | 删 SSTE 大段注释时误删 `case A_SER: {` 的 `{` | 恢复花括号 |
+| 7 | qtest 断言/数量过时 | register-contract 断言与 TRM 冲突；文档数量不同步 | 断言随 #3 修正未同步；文档漏更新 | 更新断言；reviewer-guide/cover letter 数量统一（10→11→13→14） |
+
+### 过程教训
+
+- PowerShell 下 bash heredoc 和 `python -c` 内嵌会被引号破坏：统一用
+  here-string 写 `.py` 到 WSL 侧再执行。
+- 修 review 问题要克制范围：SSTE/SER 两轮"越改越多"，先读 TRM/语义依据
+  再动手，每轮验证（qtest + U-Boot/Linux 端到端）。
+- 同一行为语义会被多轮补全（SER 三轮、TXFTHR 两个遗漏），修改前先检查
+  相邻逻辑是否还有同类遗漏。
+
 ---
 
 <details>
