@@ -1,6 +1,35 @@
-# K230 SPI NOR 完整冷启动 Gap 探究报告
+# K230 SPI NOR 完整冷启动 Gap 调查与实施计划
 
 记录时间：2026-07-28
+
+稳定概念、镜像格式和 Guest 启动基础见
+[K230 SPI NOR 冷启动知识手册](./k230-cold-boot-handbook.md)。本文只维护调查证据、当前
+Gap 和实施计划。
+
+## 2026-08-05 状态补充
+
+本报告主体保留 2026-07-28 的动态实验基线。其后出现的候选模块改变了部分 Gap 的
+可行性判断，但尚未形成完整组合启动证据：
+
+| 模块/问题 | 当前更新 |
+|---|---|
+| DDRC + PHY | 系列作者已用 SDK SPL 穿过 DDR 初始化并到达 SPI boot path |
+| Standard DW SSI | v2 第一批覆盖 Standard PIO、IRQ、K230 三实例和 SPI NOR；Enhanced/IDMA/XIP 后续处理 |
+| GSDMA + decomp-gzip | v2 已有独立与协同 qtest；真实 SPL/U-Boot 组合待验证 |
+| IOMUX、RMU | 已有候选模型，可替换旧基线中的部分 unimplemented 区域 |
+| PWR | 状态位为零会执行有限的一百万次轮询，不是永久死循环 |
+| firmware header/PUFS | 默认非安全 SPL 会因 PUFS digest 为零而 `sha256 error`；软件 SHA 可保留真实完整性校验 |
+
+因此当前最小验证组合调整为：
+
+```text
+DDRC/PHY 候选模型
+  + Standard SPI NOR
+  + 软件 SHA 的非安全 SPL
+  + GSDMA/decomp-gzip 或 IH_COMP_NONE U-Boot
+  -> 先验证 SPL 到完整 U-Boot
+  -> 最后补 functional BootROM
+```
 
 ## 结论摘要
 
@@ -299,7 +328,7 @@ K230 的具体实现见 `hw/riscv/k230.c`：它调用 `riscv_setup_rom_reset_vec
 8. 完整 U-Boot 的 K230 私有 gzip 解压。
 
 QEMU 当前在 BootROM 地址建立 64 KiB ROM region，但
-[`hw/riscv/k230.c`](../../../qemu-camp-2026-k230/hw/riscv/k230.c) 最终调用
+[`hw/riscv/k230.c`](../../../my-qemu-camp-2026-k230/hw/riscv/k230.c) 最终调用
 `riscv_setup_rom_reset_vec()` 生成的是跳转到 `-bios` firmware 的 reset stub。它不会读取
 MTD Flash，不解析 K230 firmware header，也不会加载 `swap_fn_u-boot-spl.bin`。
 
