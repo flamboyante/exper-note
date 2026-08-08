@@ -1,30 +1,45 @@
 # QEMU Camp 2026 工作区状态
 
-最后更新：2026-08-05
+最后更新：2026-08-08
 
 本页是工作区当前主题、实施阶段和下一步的唯一状态入口。新的 agent 先读根目录 `AGENTS.md`，再读本页；不要用目录名、历史分支或聊天记录推断当前优先级。
 
-## 当前默认主题：K230 SPI/QSPI V2
+## 当前默认主题：K230 SPI/QSPI V2（Standard PIO series V3 待发送）
 
 | 项目 | 当前状态 |
 |---|---|
-| 阶段 | V2 Step 1~4 全部完成；5 个 patch 已重组并完成全部 review 修复；已 rebase 到上游 master `b428fe0362`，发送前准备就绪。 |
-| V2 定义 | 新一轮大版本：将当前 K230 SSI 模型重构为通用 `DW_SSI` 与 K230 SoC 集成。 |
+| 阶段 | V2 重构完成；Standard PIO 5-patch 系列 V2 已发送并收齐上游意见，V3 已重写完成（14 项 qtest），尚未发送。 |
+| V2 定义 | 新一轮大版本：将当前 K230 SSI 模型重构为通用 `DWC_SSI` 与 K230 SoC 集成。 |
 | V1 基线 | V1 基线分支为 `k230-spiv3.4`；该分支和 `upstream-review/current/` 的 v3.4 材料均属于 V1。 |
-| V2 源码检查点 | 分支 `T_v2-5patch`，5 个 patch（`e975addedc`/`534f116c04`/`297b848a1d`/`8fc80e0474`/`b0fc2d4893`），base `b428fe0362`（2026-07-31 上游）。 |
+| 已发送 V2 | 分支 `origin/T_v2-5patch`，tip `b0fc2d4893`，base `b428fe0362`；`[PATCH v2 0/5]` 于 2026-08-02 03:28 (+0800) 发送，[lore 线程](https://lore.kernel.org/qemu-devel/20260801192848.30606-1-flamboyant.h.01@gmail.com/T/)。 |
+| 当前 V3 源码 | 分支 `T_v3-5patch`（当前 checkout），HEAD `fef8beff7e`，base 与 V2 相同；五个 commit 已就地重写完成，尚未推送、尚未发送。 |
 | 架构决策 | [K230 SPI/QSPI 上游 Review 与 V2 重构决策](./k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md)；这是 V2 唯一决策入口。 |
-| 当前计划 | [第一批 commit message 定稿](./k230/upstream-review/k230-spi-qspi-v2-first-series-commit-messages-bilingual.md)、[cover letter v2](./k230/upstream-review/k230-spi-qspi-v2-first-series-cover-letter-bilingual.md)、[reviewer 测试指南](./k230/upstream-review/k230-spi-v2-reviewer-test-guide.md)。 |
-| 当前源码 | [通用 DW SSI 模型](../my-qemu-camp-2026-k230/hw/ssi/dw_ssi.c)、[K230 machine](../my-qemu-camp-2026-k230/hw/riscv/k230.c)。 |
-| 当前验证 | [K230 SSI qtest](../my-qemu-camp-2026-k230/tests/qtest/k230-dw-ssi-test.c)：14/14 全绿；checkpatch 0 error/0 warning；`git diff --check` 干净；U-Boot sf 与 Linux 5.10.4 MTD 端到端 PASS。 |
+| 当前计划 | [V3 改动计划（上游评审意见落实）](./k230/spi/k230-spi-v3-review-plan.md)；V2 批次范围见 [Step 4 Plan Final V1.3](./k230/upstream-review/k230-spi-qspi-v2-step4-plan-final-instance-configurationV1.3.md)。 |
+| 当前源码 | [通用 DWC SSI 模型](../qemu-camp-2026-k230/hw/ssi/dwc_ssi.c)、[K230 machine](../qemu-camp-2026-k230/hw/riscv/k230.c)。 |
+| 当前验证 | [K230 DWC SSI qtest](../qemu-camp-2026-k230/tests/qtest/k230-dwc-ssi-test.c)，14 项；V3 cover letter 声明构建、qtest、checkpatch 与 `git diff --check` 均通过。 |
+| 待提交文档 | V3 review plan、[V3 cover letter](./k230/upstream-review/k230-spi-qspi-v2-5patch-cover-letter.md)、[V2/V3 双语对比稿](./k230/upstream-review/k230-spi-qspi-v3-5patch-commit-cover-letter-bilingual-comparison.md)、[b4 发送指南](./k230/upstream-review/k230-upstream-b4-email-send-guide.md)（exper-note 内均未跟踪）。 |
 | 关键证据 | [寄存器审计](./k230/spi/k230-spi-qspi-register-audit.md)、[V1 Flash Window study](./k230/spi/k230-spi-qspi-flash-window-study-plan.md)、K230 TRM 与 SDK 驱动（由决策记录按需链接）。 |
 
 ### 下一步
 
-第一批 5 个 patch 已就绪（`T_v2-5patch` 分支，patch 目录
-`k230-spiv2-first-series-patches/`），`git send-email --dry-run` 已通过：
-6 封邮件（cover + 5 patch）Result OK，收件人/线程正确。正式发送去掉
-`--dry-run`（Gmail 需应用专用密码）。发送后等待 reviewer 反馈并处理 v2 修订。
-Review 修复明细见 [决策笔记 §17](./k230/upstream-review/k230-spi-qspi-review-v2-decision-notes.md)。
+1. 按 [V3 review plan](./k230/spi/k230-spi-v3-review-plan.md) 验证步骤复核 V3：逐 patch 构建、checkpatch、残留搜索、参考链接可达性。
+2. 用 b4 发送 `[PATCH v3 0/5]`（新顶层线程，不 `In-Reply-To` V2；抄送 Bin Meng、Chao Liu、Anirudh Srinivasan）。
+3. 发送后回到 V2 后续批次：enhanced、IDMA、XIP 为独立 follow-up series，不进入本轮。
+
+### 主要时间节点
+
+| 时间 (+0800) | 事件 |
+|---|---|
+| 07-29 ~ 07-31 | V2 Step 4 计划 V1.1 → V1.3 迭代；07-31 最后更新状态页（本页此前的内容）。 |
+| 08-02 02:25 ~ 02:36 | V2 五个 commit 完成于 `T_v2-5patch`（base `b428fe0362`）。 |
+| 08-02 03:28 | `[PATCH v2 0/5] hw/ssi: Add DesignWare SSI standard PIO support for K230` 发送至 qemu-devel。 |
+| 08-03 | Chao Liu（02:10 UTC）要求 databook 公开链接；当日回复公开资料清单（K230 TRM、Intel Arria 10 TRM、Linux 驱动与 binding）。 |
+| 08-05 | Anirudh（8/4 18:38 UTC）指出 dw-apb-ssi 与 dwc-ssi 的 TMOD 位布局不同，建议命名统一 `DWC_SSI`/`dwc_ssi.c`；当天完成双方确认，定下 V3 必改项。 |
+| 08-07 | 检查 b4 0.13.0，撰写 [b4 发送指南](./k230/upstream-review/k230-upstream-b4-email-send-guide.md)。 |
+| 08-08 10:43 ~ 10:48 | V3 五个 commit 重写完成于 `T_v3-5patch`（HEAD `fef8beff7e`）：DWC 命名统一、补充公开参考链接与三个 `Suggested-by`、修正 EEPROM-read / TX-only / RX FIFO overrun / RX-only dummy、`SPI_FRF` capability suppression、九路 IRQ 且 DONE/AXIE 恒低。 |
+| 08-08 | V3 review plan、V3 cover letter、V2/V3 双语对比稿备好（exper-note 未跟踪、未提交）。 |
+| 下一步 | V3 校验 → b4 发送 → 等待上游 review。 |
+
 ## 最近完成：全 canmv 冷启动验证（2026-08-07）
 
 | 项 | 状态 |
@@ -52,6 +67,12 @@ Review 修复明细见 [决策笔记 §17](./k230/upstream-review/k230-spi-qspi-
 | 复现命令 | `qemu-system-riscv64 -M k230 -nographic -mtdblock /tmp/k230-coldboot-spi.img`（镜像与 U-Boot 构建产物在 `/tmp`，WSL 重启即失） |
 | 计划文档 | [k230-coldboot-merge-plan.md（v3）](./k230/spi/coldboot/k230-coldboot-merge-plan.md) |
 | 遗留 | 三处调试打印未清理（k230.c L649/699、designware_spi.c L1179、k230_img.c L472）；官方 linux_system.bin 布局（7MB 分区）压缩包大小待验证（boot-assets 已有 SDK 5.10.4 标准 PTE 重编版，但 26.7MB gzip 大概率超 7MB）；canmv_qemu dts 如需实际启动需改 canmv boot mode |
+
+### 证据与范围闸门
+
+- V2/V3 只实现已有多源证据支持的 DWC SSI 子集；不宣称完整覆盖全部 DWC SSI 变体。
+- V3 保持 Standard-only：不加入 enhanced、IDMA、DONE/AXIE 事件源、XIP 正路径、trace event 和 `MAINTAINERS` 修改；dw-apb-ssi 变体有意不实现。
+- 尚未确认的 capability、实例参数或 K230 quirk 不凭猜测固化；遵循决策记录的证据分类和 Databook 闸门。Synopsys databook 非公开，只作内部核对，不进上游引用。
 
 ## 可切换主题
 

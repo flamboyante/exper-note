@@ -88,6 +88,7 @@
 ## 上游 Review 资料(`upstream-review/`)
 
 - [上游邮件沟通日志](./upstream-review/upstream-mail-log.md)
+- [用 B4 通过邮件向 QEMU/Linux 上游发送 patch](./upstream-review/k230-upstream-b4-email-send-guide.md)
 - [IOMUX 上游 review 回复](./upstream-review/k230-iomux-upstream-review-reply.md)
 - [DW SSI 拆分分析](./upstream-review/k230-spi-qspi-dwssi-split-analysis.md)
 - [Review v2 决策记录](./upstream-review/k230-spi-qspi-review-v2-decision-notes.md)
